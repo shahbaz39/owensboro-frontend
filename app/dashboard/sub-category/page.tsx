@@ -1,26 +1,162 @@
-const subCategories = [
-  { id: 1, name: "Live Music", category: "Event & Entertainment", listings: 12 },
-  { id: 2, name: "Performing Arts & Culture Events", category: "Event & Entertainment", listings: 8 },
-  { id: 3, name: "Pop-Up Events", category: "Event & Entertainment", listings: 6 },
-  { id: 4, name: "Fine Dining", category: "Food", listings: 10 },
-  { id: 5, name: "Fast Food", category: "Food", listings: 14 },
-  { id: 6, name: "Boutique Hotels", category: "Hotels", listings: 9 },
-];
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+  collection,
+  getDocs,
+  deleteDoc,
+  doc,
+  addDoc,
+  updateDoc,
+} from "firebase/firestore";
+import { db } from "@/lib/firebaseServices";
+
+type SubCategory = {
+  id: string;
+  name: string;
+  category: string;
+  categoryId: string;
+};
+
+type Category = {
+  id: string;
+  name: string;
+};
 
 export default function Page() {
+  const [subCategories, setSubCategories] = useState<SubCategory[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<SubCategory | null>(null);
+
+  const [form, setForm] = useState({
+    name: "",
+    categoryId: "",
+  });
+
+  // ✅ PAGINATION
+  const [page, setPage] = useState(1);
+  const perPage = 10;
+
+  const paginatedData = subCategories.slice(
+    (page - 1) * perPage,
+    page * perPage,
+  );
+
+  // 🔥 FETCH
+  useEffect(() => {
+    const fetchData = async () => {
+      const catSnap = await getDocs(collection(db, "Catagories"));
+      const subSnap = await getDocs(collection(db, "SubCatagories"));
+
+      const cats = catSnap.docs.map((d) => ({
+        id: d.id,
+        name: d.data().catagoryName,
+      }));
+
+      const subs = subSnap.docs.map((d) => {
+        const data = d.data();
+
+        const refId = data.catagoriesRef?.id; // ✅ correct field
+        const cat = cats.find((c) => c.id === refId);
+
+        return {
+          id: d.id,
+          name: data.name || "Untitled", // ✅ correct field
+          category: cat?.name || "", // ✅ removed "Unknown"
+          categoryId: refId,
+        };
+      });
+
+      setCategories(cats);
+      setSubCategories(subs);
+      setLoading(false);
+    };
+
+    fetchData();
+  }, []);
+
+  // 🔥 ADD
+  const handleAdd = async () => {
+    const ref = doc(db, "Catagories", form.categoryId);
+
+    const docRef = await addDoc(collection(db, "SubCatagories"), {
+      name: form.name, // ✅ FIXED
+      catagoriesRef: ref, // ✅ FIXED
+      createdAt: new Date(),
+    });
+
+    const cat = categories.find((c) => c.id === form.categoryId);
+
+    setSubCategories((prev) => [
+      ...prev,
+      {
+        id: docRef.id,
+        name: form.name,
+        category: cat?.name || "",
+        categoryId: form.categoryId,
+      },
+    ]);
+
+    setAdding(false);
+    setForm({ name: "", categoryId: "" });
+  };
+
+  // 🔥 UPDATE
+  const handleUpdate = async () => {
+    if (!editing) return;
+
+    const ref = doc(db, "Catagories", form.categoryId);
+
+    await updateDoc(doc(db, "SubCatagories", editing.id), {
+      name: form.name, // ✅ FIXED
+      catagoriesRef: ref, // ✅ FIXED
+    });
+
+    const cat = categories.find((c) => c.id === form.categoryId);
+
+    setSubCategories((prev) =>
+      prev.map((item) =>
+        item.id === editing.id
+          ? {
+              ...item,
+              name: form.name,
+              category: cat?.name || "",
+              categoryId: form.categoryId,
+            }
+          : item,
+      ),
+    );
+
+    setEditing(null);
+  };
+
+  // 🔥 DELETE
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this sub category?")) return;
+
+    await deleteDoc(doc(db, "SubCatagories", id));
+    setSubCategories((prev) => prev.filter((i) => i.id !== id));
+  };
+
   return (
     <div className="px-4 pt-6 pb-10 md:px-8">
       <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
         <div>
-          <h1 className="text-4xl font-bold tracking-tight text-[#ff7a59] md:text-5xl">
+          <h1 className="text-4xl font-bold text-[#ff7a59] md:text-5xl">
             Sub Categories
           </h1>
-          <p className="mt-2 text-lg font-medium text-[#e8dcc7] md:text-xl">
+          <p className="mt-2 text-lg text-[#e8dcc7] md:text-xl">
             Organize and manage the sub sections inside each category.
           </p>
         </div>
 
-        <button className="inline-flex h-11 items-center justify-center rounded-xl border border-[#ff7a59] px-5 text-sm font-semibold text-[#ff7a59] transition hover:bg-[#ff7a59] hover:text-white">
+        <button
+          onClick={() => setAdding(true)}
+          className="inline-flex h-11 items-center justify-center rounded-xl border border-[#ff7a59] px-5 text-sm font-semibold text-[#ff7a59] hover:bg-[#ff7a59] hover:text-white"
+        >
           Add Sub Category
         </button>
       </div>
@@ -30,85 +166,126 @@ export default function Page() {
           <h2 className="text-2xl font-bold text-[#ff7a59] md:text-4xl">
             Sub Category Directory
           </h2>
-          <p className="mt-2 max-w-4xl text-sm font-medium leading-6 text-[#f3ead7] md:text-base">
-            Review, edit, and maintain the sub categories used across the app.
-            Each sub category belongs to a parent category and helps keep
-            listings better organized.
-          </p>
         </div>
 
-        <div className="space-y-3">
-          {subCategories.map((item) => (
-            <SubCategoryRow
-              key={item.id}
-              name={item.name}
-              category={item.category}
-              listings={item.listings}
-            />
-          ))}
-        </div>
+        {loading ? (
+          <p className="text-[#f3ead7]">Loading...</p>
+        ) : (
+          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+            {paginatedData.map((item) => (
+              <div
+                key={item.id}
+                className="group flex flex-col justify-between rounded-2xl bg-[#ece2cb] p-4 text-black shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/10"
+              >
+                {/* TOP */}
+                <div>
+                  <h3 className="text-base font-semibold md:text-lg truncate group-hover:text-[#ff7a59] transition">
+                    {item.name}
+                  </h3>
 
-        <Pagination />
+                  <p className="mt-1 text-xs text-black/50 md:text-sm truncate">
+                    {item.category}
+                  </p>
+                </div>
+
+                {/* ACTIONS */}
+                <div className="mt-4 flex gap-2">
+                  <button
+                    onClick={() => {
+                      setEditing(item);
+                      setForm({
+                        name: item.name,
+                        categoryId: item.categoryId,
+                      });
+                    }}
+                    className="w-full inline-flex items-center justify-center rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:shadow-md md:text-sm"
+                  >
+                    Update
+                  </button>
+
+                  <button
+                    onClick={() => handleDelete(item.id)}
+                    className="w-full inline-flex items-center justify-center rounded-lg border border-red-400/40 px-3 py-2 text-xs font-semibold text-red-500 transition-all duration-200 hover:scale-[1.03] hover:bg-red-500 hover:text-white hover:shadow-md md:text-sm"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <Pagination
+          total={subCategories.length}
+          page={page}
+          setPage={setPage}
+        />
       </section>
+
+      {/* MODAL */}
+      {(adding || editing) && (
+        <Modal
+          title={adding ? "Add Sub Category" : "Update Sub Category"}
+          onClose={() => {
+            setAdding(false);
+            setEditing(null);
+          }}
+        >
+          <Input
+            label="Sub Category Name"
+            value={form.name}
+            onChange={(v: string) => setForm({ ...form, name: v })}
+          />
+
+          <div className="mt-3">
+            <label className="text-black font-semibold">Category</label>
+            <select
+              value={form.categoryId}
+              onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-[#ff7a59] bg-white px-4 py-3 text-black"
+            >
+              <option value="">Select Category</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            onClick={adding ? handleAdd : handleUpdate}
+            className="mt-6 w-full bg-[#ff7a59] text-white py-3 rounded-xl"
+          >
+            {adding ? "Create" : "Update"}
+          </button>
+        </Modal>
+      )}
     </div>
   );
 }
 
-function SubCategoryRow({
-  name,
-  category,
-  listings,
-}: {
-  name: string;
-  category: string;
-  listings: number;
-}) {
-  return (
-    <div className="group flex items-center justify-between rounded-xl bg-[#ece2cb] px-4 py-3 text-black transition hover:-translate-y-0.5 hover:shadow-md">
-      <div className="min-w-0">
-        <h3 className="truncate text-base font-semibold md:text-lg">{name}</h3>
+/* UI COMPONENTS */
 
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs md:text-sm">
-          <span className="rounded-full bg-black/8 px-2.5 py-1 font-medium text-black/70">
-            {category}
-          </span>
-          <span className="text-black/60">{listings} active listings</span>
-        </div>
+function SubCategoryRow({ name, category, onDelete, onEdit }: any) {
+  return (
+    <div className="flex justify-between rounded-xl bg-[#ece2cb] px-4 py-3 text-black">
+      <div>
+        <h3 className="font-semibold">{name}</h3>
+        <span className="text-sm">{category}</span>
       </div>
 
-      <div className="ml-4 flex items-center gap-2">
-        <button className="inline-flex items-center gap-2 rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white transition hover:opacity-90 md:text-sm">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-4 w-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M16.862 3.487a2.1 2.1 0 1 1 2.97 2.97L8.62 17.67 4 18.5l.83-4.62L16.862 3.487Z"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M14.5 5.85 18.15 9.5"
-            />
-          </svg>
+      <div className="flex gap-2">
+        <button
+          onClick={onEdit}
+          className="bg-[#ff7a59] text-white px-3 py-2 rounded-lg"
+        >
           Update
         </button>
-
-        <button className="inline-flex items-center gap-2 rounded-lg border border-red-400/40 px-3 py-2 text-xs font-semibold text-red-500 transition hover:bg-red-500 hover:text-white md:text-sm">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-4 w-4"
-            fill="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM7 9h2v8H7V9Zm-1 11h12a2 2 0 0 0 2-2V8H4v10a2 2 0 0 0 2 2Z" />
-          </svg>
+        <button
+          onClick={onDelete}
+          className="border border-red-400 text-red-500 px-3 py-2 rounded-lg"
+        >
           Delete
         </button>
       </div>
@@ -116,38 +293,57 @@ function SubCategoryRow({
   );
 }
 
-function Pagination() {
+function Modal({ children, title, onClose }: any) {
   return (
-    <div className="mt-6 flex flex-col gap-3 border-t border-white/10 pt-5 md:flex-row md:items-center md:justify-between">
-      <p className="text-sm text-[#f3ead7]/70">
-        Showing <span className="font-semibold text-[#f3ead7]">1–6</span> of{" "}
-        <span className="font-semibold text-[#f3ead7]">27</span> sub categories
+    <div className="fixed inset-0 bg-black/70 flex justify-center items-center">
+      <div className="bg-[#e8dcc7] p-6 rounded-3xl w-[90%] max-w-lg">
+        <div className="flex justify-between mb-4">
+          <h2 className="text-xl font-bold text-[#ff7a59]">{title}</h2>
+          <button onClick={onClose}>✖</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Input({ label, value, onChange }: any) {
+  return (
+    <div className="mt-3">
+      <label className="text-black font-semibold">{label}</label>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-1 w-full rounded-xl border border-[#ff7a59] bg-white px-4 py-3 text-black"
+      />
+    </div>
+  );
+}
+
+function Pagination({ total, page, setPage }: any) {
+  const perPage = 10;
+  const totalPages = Math.ceil(total / perPage);
+
+  return (
+    <div className="mt-6 flex justify-between text-[#f3ead7]">
+      <p>
+        Showing {(page - 1) * perPage + 1}–{Math.min(page * perPage, total)} of{" "}
+        {total}
       </p>
 
-      <div className="flex items-center gap-2">
-        <button className="rounded-lg border border-white/10 px-3 py-2 text-sm text-[#f3ead7]/70 transition hover:border-[#ff7a59]/40 hover:text-[#f3ead7]">
+      <div className="flex gap-2">
+        <button
+          disabled={page === 1}
+          onClick={() => setPage(page - 1)}
+          className="opacity-70 disabled:opacity-30"
+        >
           Previous
         </button>
 
-        <button className="h-10 min-w-10 rounded-lg bg-[#ff7a59] px-3 text-sm font-semibold text-white">
-          1
-        </button>
-
-        <button className="h-10 min-w-10 rounded-lg border border-white/10 px-3 text-sm text-[#f3ead7] transition hover:border-[#ff7a59]/40 hover:text-white">
-          2
-        </button>
-
-        <button className="h-10 min-w-10 rounded-lg border border-white/10 px-3 text-sm text-[#f3ead7] transition hover:border-[#ff7a59]/40 hover:text-white">
-          3
-        </button>
-
-        <span className="px-1 text-[#f3ead7]/50">...</span>
-
-        <button className="h-10 min-w-10 rounded-lg border border-white/10 px-3 text-sm text-[#f3ead7] transition hover:border-[#ff7a59]/40 hover:text-white">
-          5
-        </button>
-
-        <button className="rounded-lg border border-white/10 px-3 py-2 text-sm text-[#f3ead7] transition hover:border-[#ff7a59]/40 hover:text-white">
+        <button
+          disabled={page === totalPages}
+          onClick={() => setPage(page + 1)}
+        >
           Next
         </button>
       </div>

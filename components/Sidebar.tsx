@@ -12,6 +12,7 @@ const menuItems = [
   { name: "Challenge", path: "/dashboard/challenge" },
   { name: "Vote for Favourite", path: "/dashboard/vote" },
   { name: "Contact Support", path: "/dashboard/contact" },
+  { name: "User Info", path: "/dashboard/users" },
 ];
 
 export default function Sidebar() {

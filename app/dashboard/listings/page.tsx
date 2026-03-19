@@ -1,180 +1,734 @@
-const listings = [
-  {
-    id: 1,
-    title: "VFW Live Music in Owensboro",
-    category: "Event & Entertainment",
-    subCategory: "Live Music",
-    location: "Owensboro",
-    status: "Published",
-  },
-  {
-    id: 2,
-    title: "Retro Shock at Senior Community Center of Owensboro",
-    category: "Event & Entertainment",
-    subCategory: "Performing Arts",
-    location: "Owensboro",
-    status: "Published",
-  },
-  {
-    id: 3,
-    title: "Chance Stanley at Brasher's Lil Nashville",
-    category: "Event & Entertainment",
-    subCategory: "Live Music",
-    location: "Nashville",
-    status: "Draft",
-  },
-  {
-    id: 4,
-    title: "March Craftness 2026",
-    category: "Shopping",
-    subCategory: "Pop-Up Events",
-    location: "Downtown",
-    status: "Published",
-  },
-  {
-    id: 5,
-    title: "Owensboro Food Truck Fiesta",
-    category: "Food",
-    subCategory: "Fast Food",
-    location: "Riverfront",
-    status: "Archived",
-  },
-  {
-    id: 6,
-    title: "Boutique Stay Weekend Offer",
-    category: "Hotels",
-    subCategory: "Boutique Hotels",
-    location: "Owensboro",
-    status: "Published",
-  },
-];
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import {
+  collection,
+  getDocs,
+  deleteDoc,
+  doc,
+  addDoc,
+  updateDoc,
+} from "firebase/firestore";
+import {
+  ref,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject,
+} from "firebase/storage";
+
+import { db, storage } from "@/lib/firebaseServices";
+
+/* TYPES */
+type Category = { id: string; name: string };
+type SubCategory = { id: string; name: string; categoryId: string };
+
+type Listing = {
+  id: string;
+  title: string;
+  category: string;
+  subCategory: string;
+  categoryId: string;
+  subCategoryId: string;
+  location: string;
+  about: string;
+  shortDescription: string;
+  time: string;
+  contact: string;
+  image?: string;
+};
+
+type ListingForm = {
+  title: string;
+  categoryId: string;
+  subCategoryId: string;
+  location: string;
+  about: string;
+  shortDescription: string;
+  time: string;
+  contact: string;
+};
+
+const EMPTY_FORM: ListingForm = {
+  title: "",
+  categoryId: "",
+  subCategoryId: "",
+  location: "",
+  about: "",
+  shortDescription: "",
+  time: "",
+  contact: "",
+};
 
 export default function Page() {
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [subCategories, setSubCategories] = useState<SubCategory[]>([]);
+
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Listing | null>(null);
+  const [deleting, setDeleting] = useState<Listing | null>(null);
+
+  const [file, setFile] = useState<File | null>(null);
+  const [removeExistingImage, setRemoveExistingImage] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [form, setForm] = useState<ListingForm>(EMPTY_FORM);
+
+  /* PAGINATION */
+  const [page, setPage] = useState(1);
+  const perPage = 10;
+
+  const totalPages = Math.max(1, Math.ceil(listings.length / perPage));
+  const safePage = Math.min(page, totalPages);
+
+  const paginatedData = useMemo(() => {
+    const start = (safePage - 1) * perPage;
+    return listings.slice(start, start + perPage);
+  }, [listings, safePage]);
+
+  /* FETCH */
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError("");
+
+        const [productSnap, catSnap, subSnap] = await Promise.all([
+          getDocs(collection(db, "Products")),
+          getDocs(collection(db, "Catagories")),
+          getDocs(collection(db, "SubCatagories")),
+        ]);
+
+        const cats: Category[] = catSnap.docs.map((d) => ({
+          id: d.id,
+          name: d.data().catagoryName || "Untitled Category",
+        }));
+
+        const subs: SubCategory[] = subSnap.docs.map((d) => ({
+          id: d.id,
+          name: d.data().name || d.data().subCategoryName || "Untitled Sub Category",
+          categoryId: d.data().catagoriesRef?.id || "",
+        }));
+
+        const data: Listing[] = productSnap.docs.map((d) => {
+          const x = d.data();
+
+          const catId = x.catagoryRef?.id || "";
+          const subId = x.subCatagoryRef?.id || "";
+
+          const cat = cats.find((c) => c.id === catId);
+          const sub = subs.find((s) => s.id === subId);
+
+          return {
+            id: d.id,
+            title: x.productName || "",
+            category: cat?.name || "",
+            subCategory: sub?.name || "",
+            categoryId: catId,
+            subCategoryId: subId,
+            location: x.productLocation || "",
+            about: x.about || "",
+            shortDescription: x.shortDescription || "",
+            time: x.time || "",
+            contact: x.contactInfo || "",
+            image: x.imageUrl || "",
+          };
+        });
+
+        setListings(data);
+        setCategories(cats);
+        setSubCategories(subs);
+      } catch (err) {
+        console.error(err);
+        setError("Failed to load listings.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  /* HELPERS */
+  const filteredSubs = useMemo(
+    () => subCategories.filter((s) => s.categoryId === form.categoryId),
+    [subCategories, form.categoryId]
+  );
+
+  const closeModal = () => {
+    setAdding(false);
+    setEditing(null);
+    setForm(EMPTY_FORM);
+    setFile(null);
+    setRemoveExistingImage(false);
+    setSaving(false);
+  };
+
+  const openAddModal = () => {
+    setForm(EMPTY_FORM);
+    setFile(null);
+    setRemoveExistingImage(false);
+    setAdding(true);
+    setEditing(null);
+  };
+
+  const openEditModal = (listing: Listing) => {
+    setEditing(listing);
+    setAdding(false);
+    setFile(null);
+    setRemoveExistingImage(false);
+    setForm({
+      title: listing.title || "",
+      categoryId: listing.categoryId || "",
+      subCategoryId: listing.subCategoryId || "",
+      location: listing.location || "",
+      about: listing.about || "",
+      shortDescription: listing.shortDescription || "",
+      time: listing.time || "",
+      contact: listing.contact || "",
+    });
+  };
+
+  const validateForm = () => {
+    if (!form.categoryId) return "Please select a category.";
+    if (!form.subCategoryId) return "Please select a sub category.";
+    if (!form.title.trim()) return "Title is required.";
+    if (!form.shortDescription.trim()) return "Short description is required.";
+    if (!form.about.trim()) return "About is required.";
+    if (!form.location.trim()) return "Location is required.";
+    if (!form.time.trim()) return "Time is required.";
+    if (!form.contact.trim()) return "Contact is required.";
+    return "";
+  };
+
+  const uploadImage = async () => {
+    if (!file) return "";
+    const storageRef = ref(storage, `listings/${Date.now()}-${file.name}`);
+    await uploadBytes(storageRef, file);
+    return await getDownloadURL(storageRef);
+  };
+
+  const safelyDeleteImageByUrl = async (url?: string) => {
+    if (!url) return;
+    try {
+      const imageRef = ref(storage, url);
+      await deleteObject(imageRef);
+    } catch (err) {
+      console.error("Image delete skipped/failed:", err);
+    }
+  };
+
+  /* ADD */
+  const handleAdd = async () => {
+    const validationError = validateForm();
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError("");
+
+      const imageUrl = await uploadImage();
+      const catRef = doc(db, "Catagories", form.categoryId);
+      const subRef = doc(db, "SubCatagories", form.subCategoryId);
+
+      const docRef = await addDoc(collection(db, "Products"), {
+        productName: form.title,
+        catagoryRef: catRef,
+        subCatagoryRef: subRef,
+        productLocation: form.location,
+        about: form.about,
+        shortDescription: form.shortDescription,
+        time: form.time,
+        contactInfo: form.contact,
+        imageUrl,
+        createdAt: new Date(),
+      });
+
+      const cat = categories.find((c) => c.id === form.categoryId);
+      const sub = subCategories.find((s) => s.id === form.subCategoryId);
+
+      setListings((prev) => [
+        {
+          id: docRef.id,
+          title: form.title,
+          category: cat?.name || "",
+          subCategory: sub?.name || "",
+          categoryId: form.categoryId,
+          subCategoryId: form.subCategoryId,
+          location: form.location,
+          about: form.about,
+          shortDescription: form.shortDescription,
+          time: form.time,
+          contact: form.contact,
+          image: imageUrl,
+        },
+        ...prev,
+      ]);
+
+      setPage(1);
+      closeModal();
+    } catch (err) {
+      console.error(err);
+      setError("Failed to create listing.");
+      setSaving(false);
+    }
+  };
+
+  /* UPDATE */
+  const handleUpdate = async () => {
+    if (!editing) return;
+
+    const validationError = validateForm();
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError("");
+
+      const catRef = doc(db, "Catagories", form.categoryId);
+      const subRef = doc(db, "SubCatagories", form.subCategoryId);
+
+      let nextImageUrl = editing.image || "";
+
+      if (file) {
+        if (editing.image) {
+          await safelyDeleteImageByUrl(editing.image);
+        }
+        nextImageUrl = await uploadImage();
+      } else if (removeExistingImage) {
+        await safelyDeleteImageByUrl(editing.image);
+        nextImageUrl = "";
+      }
+
+      await updateDoc(doc(db, "Products", editing.id), {
+        productName: form.title,
+        catagoryRef: catRef,
+        subCatagoryRef: subRef,
+        productLocation: form.location,
+        about: form.about,
+        shortDescription: form.shortDescription,
+        time: form.time,
+        contactInfo: form.contact,
+        imageUrl: nextImageUrl,
+      });
+
+      const cat = categories.find((c) => c.id === form.categoryId);
+      const sub = subCategories.find((s) => s.id === form.subCategoryId);
+
+      setListings((prev) =>
+        prev.map((l) =>
+          l.id === editing.id
+            ? {
+                ...l,
+                title: form.title,
+                category: cat?.name || "",
+                subCategory: sub?.name || "",
+                categoryId: form.categoryId,
+                subCategoryId: form.subCategoryId,
+                location: form.location,
+                about: form.about,
+                shortDescription: form.shortDescription,
+                time: form.time,
+                contact: form.contact,
+                image: nextImageUrl,
+              }
+            : l
+        )
+      );
+
+      closeModal();
+    } catch (err) {
+      console.error(err);
+      setError("Failed to update listing.");
+      setSaving(false);
+    }
+  };
+
+  /* DELETE */
+  const confirmDelete = async () => {
+    if (!deleting) return;
+
+    try {
+      await deleteDoc(doc(db, "Products", deleting.id));
+      await safelyDeleteImageByUrl(deleting.image);
+
+      const remaining = listings.filter((l) => l.id !== deleting.id);
+      setListings(remaining);
+      setDeleting(null);
+
+      const nextTotalPages = Math.max(1, Math.ceil(remaining.length / perPage));
+      if (page > nextTotalPages) {
+        setPage(nextTotalPages);
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Failed to delete listing.");
+      setDeleting(null);
+    }
+  };
+
+  const currentImagePreview = file
+    ? URL.createObjectURL(file)
+    : editing && !removeExistingImage
+    ? editing.image || ""
+    : "";
+
   return (
-    <div className="px-4 pt-6 pb-10 md:px-8">
-      <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+    <div className="px-6 pt-6 pb-10">
+      {/* HEADER */}
+      <div className="mb-8 flex items-center justify-between">
         <div>
-          <h1 className="text-4xl font-bold tracking-tight text-[#ff7a59] md:text-5xl">
-            Listings
-          </h1>
+          <h1 className="text-4xl font-bold text-[#ff7a59]">Listings</h1>
           <p className="mt-2 text-lg font-medium text-[#e8dcc7] md:text-xl">
             Manage and organize all published platform listings.
           </p>
         </div>
 
-        <button className="inline-flex h-11 items-center justify-center rounded-xl border border-[#ff7a59] px-5 text-sm font-semibold text-[#ff7a59] transition hover:bg-[#ff7a59] hover:text-white">
+        <button
+          onClick={openAddModal}
+          className="rounded-xl border border-[#ff7a59] px-5 py-2 text-[#ff7a59] transition hover:bg-[#ff7a59] hover:text-white"
+        >
           Add Listing
         </button>
       </div>
 
-      <section className="mt-8 rounded-[28px] border border-[#ff7a59]/70 bg-[#0a0a0a] p-5 md:p-6">
-        <div className="mb-5">
-          <h2 className="text-2xl font-bold text-[#ff7a59] md:text-4xl">
-            Listings Directory
-          </h2>
-          <p className="mt-2 max-w-4xl text-sm font-medium leading-6 text-[#f3ead7] md:text-base">
-            Review, update, and manage your platform listings. Each listing is
-            organized by category and sub category for easier browsing and
-            moderation.
-          </p>
+      {/* LIST */}
+      {loading ? (
+        <div className="rounded-2xl border border-[#ff7a59]/40 bg-[#0a0a0a] px-5 py-10 text-center text-[#f3ead7]/70">
+          Loading listings...
         </div>
-
-        <div className="space-y-3">
-          {listings.map((listing) => (
-            <ListingRow
-              key={listing.id}
-              title={listing.title}
-              category={listing.category}
-              subCategory={listing.subCategory}
-              location={listing.location}
-              status={listing.status}
+      ) : listings.length === 0 ? (
+        <div className="rounded-2xl border border-[#ff7a59]/40 bg-[#0a0a0a] px-5 py-10 text-center text-[#f3ead7]/70">
+          No listings found.
+        </div>
+      ) : (
+        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+  {paginatedData.map((l) => (
+    <div
+      key={l.id}
+      className="group flex flex-col justify-between rounded-2xl bg-[#ece2cb] p-3 text-black shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/10"
+    >
+      {/* TOP */}
+      <div>
+        {l.image && (
+          <div className="overflow-hidden rounded-xl">
+            <img
+              src={l.image}
+              className="mb-3 h-32 w-full object-cover border border-black/10 transition duration-300 group-hover:scale-105"
             />
-          ))}
-        </div>
+          </div>
+        )}
 
-        <Pagination />
-      </section>
+        <h3 className="text-base font-semibold md:text-lg truncate group-hover:text-[#ff7a59] transition">
+          {l.title}
+        </h3>
+
+        <p className="mt-1 text-xs text-black/50 md:text-sm truncate">
+          {l.category} • {l.subCategory}
+        </p>
+
+        <p className="mt-1 text-xs text-black/40 truncate">
+          📍 {l.location}
+        </p>
+      </div>
+
+      {/* ACTIONS */}
+      <div className="mt-4 flex gap-2">
+        <button
+          onClick={() => openEditModal(l)}
+          className="w-full inline-flex items-center justify-center rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:shadow-md md:text-sm"
+        >
+          Update
+        </button>
+
+        <button
+          onClick={() => setDeleting(l)}
+          className="w-full inline-flex items-center justify-center rounded-lg border border-red-400/40 px-3 py-2 text-xs font-semibold text-red-500 transition-all duration-200 hover:scale-[1.03] hover:bg-red-500 hover:text-white hover:shadow-md md:text-sm"
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  ))}
+</div>
+      )}
+
+      {/* PAGINATION */}
+      <div className="mt-6 flex items-center justify-between text-[#f3ead7]">
+        <p>
+          Showing {(safePage - 1) * perPage + 1}–
+          {Math.min(safePage * perPage, listings.length)} of {listings.length}
+        </p>
+
+        <div className="flex gap-2">
+          <button
+            disabled={safePage === 1}
+            onClick={() => setPage((p) => p - 1)}
+            className="rounded-xl border border-white/10 px-4 py-2 disabled:opacity-40"
+          >
+            Previous
+          </button>
+
+          <button className="rounded-xl bg-[#ff7a59] px-4 py-2 text-white">
+            {safePage}
+          </button>
+
+          <button
+            disabled={safePage * perPage >= listings.length}
+            onClick={() => setPage((p) => p + 1)}
+            className="rounded-xl border border-white/10 px-4 py-2 disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+
+      {/* ADD / EDIT MODAL */}
+      {(adding || editing) && (
+        <Modal
+          title={adding ? "Add New Listing" : "Edit Listing"}
+          onClose={closeModal}
+        >
+          {error && (
+            <div className="mb-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-600">
+              {error}
+            </div>
+          )}
+
+          <Select
+            label="Category"
+            value={form.categoryId}
+            onChange={(v: string) =>
+              setForm((prev) => ({
+                ...prev,
+                categoryId: v,
+                subCategoryId: "",
+              }))
+            }
+            options={categories}
+            placeholder="Please select a category"
+          />
+
+          <Select
+            label="Sub Category"
+            value={form.subCategoryId}
+            onChange={(v: string) =>
+              setForm((prev) => ({ ...prev, subCategoryId: v }))
+            }
+            options={filteredSubs}
+            placeholder="Please select a sub category"
+          />
+
+          <Input
+            label="Title"
+            value={form.title}
+            onChange={(v: string) => setForm((prev) => ({ ...prev, title: v }))}
+          />
+
+          <Input
+            label="Short Description"
+            value={form.shortDescription}
+            onChange={(v: string) =>
+              setForm((prev) => ({ ...prev, shortDescription: v }))
+            }
+          />
+
+          <Textarea
+            label="About"
+            value={form.about}
+            onChange={(v: string) => setForm((prev) => ({ ...prev, about: v }))}
+          />
+
+          <Input
+            label="Location"
+            value={form.location}
+            onChange={(v: string) =>
+              setForm((prev) => ({ ...prev, location: v }))
+            }
+          />
+
+          <Input
+            label="Time"
+            value={form.time}
+            onChange={(v: string) => setForm((prev) => ({ ...prev, time: v }))}
+          />
+
+          <Input
+            label="Contact"
+            value={form.contact}
+            onChange={(v: string) =>
+              setForm((prev) => ({ ...prev, contact: v }))
+            }
+          />
+
+          {/* IMAGE */}
+          <div className="mt-5">
+            <label className="text-black text-sm font-semibold">Image</label>
+
+            <div className="mt-3 flex flex-col items-center gap-4 rounded-2xl border border-[#ff7a59]/25 bg-white/35 px-4 py-5">
+              {currentImagePreview ? (
+                <img
+                  src={currentImagePreview}
+                  alt="Listing preview"
+                  className="h-32 w-32 rounded-2xl border border-black/10 object-cover shadow-sm"
+                />
+              ) : (
+                <div className="flex h-32 w-32 items-center justify-center rounded-2xl border border-dashed border-black/20 bg-black/5 text-sm text-black/40">
+                  No image
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <label className="cursor-pointer rounded-xl border border-[#ff7a59] px-4 py-2 text-sm font-semibold text-[#ff7a59] transition hover:bg-[#ff7a59] hover:text-white">
+                  {editing ? "Change Image" : "Upload Image"}
+                  <input
+                    type="file"
+                    hidden
+                    accept="image/*"
+                    onChange={(e) => {
+                      setRemoveExistingImage(false);
+                      setFile(e.target.files?.[0] || null);
+                    }}
+                  />
+                </label>
+
+                {(file || editing?.image) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFile(null);
+                      if (editing?.image) {
+                        setRemoveExistingImage(true);
+                      }
+                    }}
+                    className="rounded-xl border border-red-400 px-4 py-2 text-sm font-semibold text-red-500 transition hover:bg-red-500 hover:text-white"
+                  >
+                    Remove Image
+                  </button>
+                )}
+              </div>
+
+              {editing && removeExistingImage && !file && (
+                <p className="text-sm text-red-500">
+                  Existing image will be removed when you save.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <button
+            onClick={adding ? handleAdd : handleUpdate}
+            disabled={saving}
+            className="mt-6 w-full rounded-xl bg-[#ff7a59] py-3 text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving
+              ? adding
+                ? "Creating..."
+                : "Saving..."
+              : adding
+              ? "Create Listing"
+              : "Save Listing"}
+          </button>
+        </Modal>
+      )}
+
+      {/* DELETE */}
+      {deleting && (
+        <Modal title="Delete Listing" onClose={() => setDeleting(null)}>
+          <p className="text-black">
+            Delete <span className="font-semibold">{deleting.title}</span>?
+          </p>
+
+          <p className="mt-2 text-sm text-black/60">
+            This action will remove the listing from your dashboard.
+          </p>
+
+          <div className="mt-6 flex justify-end gap-3">
+            <button
+              onClick={() => setDeleting(null)}
+              className="rounded-xl border border-black/15 px-4 py-2 text-black"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={confirmDelete}
+              className="rounded-xl bg-red-500 px-4 py-2 text-white"
+            >
+              Delete
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
+
+/* UI */
 
 function ListingRow({
   title,
   category,
   subCategory,
   location,
-  status,
+  image,
+  onEdit,
+  onDelete,
 }: {
   title: string;
   category: string;
   subCategory: string;
   location: string;
-  status: string;
+  image?: string;
+  onEdit: () => void;
+  onDelete: () => void;
 }) {
-  const statusClasses =
-    status === "Published"
-      ? "bg-green-100 text-green-700"
-      : status === "Draft"
-      ? "bg-yellow-100 text-yellow-700"
-      : "bg-gray-200 text-gray-700";
-
   return (
-    <div className="group flex flex-col justify-between gap-4 rounded-xl bg-[#ece2cb] px-4 py-3 text-black transition hover:-translate-y-0.5 hover:shadow-md md:flex-row md:items-center">
-      <div className="min-w-0 flex-1">
-        <h3 className="truncate text-base font-semibold md:text-lg">{title}</h3>
+    <div className="flex items-center justify-between rounded-2xl bg-[#e8dcc7] px-5 py-4 ring-1 ring-black/10 transition hover:shadow-md">
+      <div className="flex min-w-0 items-center gap-4">
+        <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-xl bg-black/5">
+          {image ? (
+            <img src={image} className="h-full w-full object-cover" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-[10px] text-black/35">
+              No Img
+            </div>
+          )}
+        </div>
 
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs md:text-sm">
-          <span className="rounded-full bg-black/8 px-2.5 py-1 font-medium text-black/70">
-            {category}
-          </span>
-
-          <span className="rounded-full bg-black/8 px-2.5 py-1 font-medium text-black/70">
-            {subCategory}
-          </span>
-
-          <span className="text-black/60">{location}</span>
-
-          <span
-            className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClasses}`}
-          >
-            {status}
-          </span>
+        <div className="min-w-0">
+          <h3 className="truncate text-lg font-semibold text-black">{title}</h3>
+          <p className="mt-1 text-sm text-black/70">
+            {category} • {subCategory}
+          </p>
+          <p className="mt-1 truncate text-xs text-black/50">{location}</p>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 self-start md:self-center">
-        <button className="inline-flex items-center gap-2 rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white transition hover:opacity-90 md:text-sm">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-4 w-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M16.862 3.487a2.1 2.1 0 1 1 2.97 2.97L8.62 17.67 4 18.5l.83-4.62L16.862 3.487Z"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M14.5 5.85 18.15 9.5"
-            />
-          </svg>
+      <div className="ml-4 flex gap-2">
+        <button
+          onClick={onEdit}
+          className="rounded-xl bg-[#ff7a59] px-4 py-2 text-white"
+        >
           Update
         </button>
-
-        <button className="inline-flex items-center gap-2 rounded-lg border border-red-400/40 px-3 py-2 text-xs font-semibold text-red-500 transition hover:bg-red-500 hover:text-white md:text-sm">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-4 w-4"
-            fill="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM7 9h2v8H7V9Zm-1 11h12a2 2 0 0 0 2-2V8H4v10a2 2 0 0 0 2 2Z" />
-          </svg>
+        <button
+          onClick={onDelete}
+          className="rounded-xl border border-red-400 px-4 py-2 text-red-500 transition hover:bg-red-500 hover:text-white"
+        >
           Delete
         </button>
       </div>
@@ -182,41 +736,103 @@ function ListingRow({
   );
 }
 
-function Pagination() {
+function Modal({
+  children,
+  title,
+  onClose,
+}: {
+  children: React.ReactNode;
+  title: string;
+  onClose: () => void;
+}) {
   return (
-    <div className="mt-6 flex flex-col gap-3 border-t border-white/10 pt-5 md:flex-row md:items-center md:justify-between">
-      <p className="text-sm text-[#f3ead7]/70">
-        Showing <span className="font-semibold text-[#f3ead7]">1–6</span> of{" "}
-        <span className="font-semibold text-[#f3ead7]">267</span> listings
-      </p>
-
-      <div className="flex items-center gap-2">
-        <button className="rounded-lg border border-white/10 px-3 py-2 text-sm text-[#f3ead7]/70 transition hover:border-[#ff7a59]/40 hover:text-[#f3ead7]">
-          Previous
-        </button>
-
-        <button className="h-10 min-w-10 rounded-lg bg-[#ff7a59] px-3 text-sm font-semibold text-white">
-          1
-        </button>
-
-        <button className="h-10 min-w-10 rounded-lg border border-white/10 px-3 text-sm text-[#f3ead7] transition hover:border-[#ff7a59]/40 hover:text-white">
-          2
-        </button>
-
-        <button className="h-10 min-w-10 rounded-lg border border-white/10 px-3 text-sm text-[#f3ead7] transition hover:border-[#ff7a59]/40 hover:text-white">
-          3
-        </button>
-
-        <span className="px-1 text-[#f3ead7]/50">...</span>
-
-        <button className="h-10 min-w-10 rounded-lg border border-white/10 px-3 text-sm text-[#f3ead7] transition hover:border-[#ff7a59]/40 hover:text-white">
-          45
-        </button>
-
-        <button className="rounded-lg border border-white/10 px-3 py-2 text-sm text-[#f3ead7] transition hover:border-[#ff7a59]/40 hover:text-white">
-          Next
-        </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-[#e8dcc7] p-6 shadow-2xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-2xl font-bold text-[#ff7a59]">{title}</h2>
+          <button
+            onClick={onClose}
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-black/10 text-black transition hover:bg-black/20"
+          >
+            ✕
+          </button>
+        </div>
+        {children}
       </div>
+    </div>
+  );
+}
+
+function Input({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="mt-4">
+      <label className="text-black text-sm font-semibold">{label}</label>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-2 w-full rounded-xl border border-[#ff7a59] bg-white px-4 py-3 text-black placeholder:text-black/35 focus:outline-none focus:ring-2 focus:ring-[#ff7a59]"
+      />
+    </div>
+  );
+}
+
+function Textarea({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="mt-4">
+      <label className="text-black text-sm font-semibold">{label}</label>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-2 h-28 w-full rounded-xl border border-[#ff7a59] bg-white px-4 py-3 text-black placeholder:text-black/35 focus:outline-none focus:ring-2 focus:ring-[#ff7a59]"
+      />
+    </div>
+  );
+}
+
+function Select({
+  label,
+  value,
+  onChange,
+  options,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: Array<{ id: string; name: string }>;
+  placeholder: string;
+}) {
+  return (
+    <div className="mt-4">
+      <label className="text-black text-sm font-semibold">{label}</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-2 w-full rounded-xl border border-[#ff7a59] bg-white px-4 py-3 text-black focus:outline-none focus:ring-2 focus:ring-[#ff7a59]"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

@@ -1,15 +1,40 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { auth } from "@/lib/firebaseServices";
 
 export default function Page() {
+  const router = useRouter();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleLogin = async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      await signInWithEmailAndPassword(auth, email, password);
+
+      router.push("/dashboard");
+
+    } catch (err: any) {
+      setError("Invalid email or password");
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-black px-6">
       <div className="w-full max-w-md rounded-3xl border border-[#ff7a59]/60 bg-[#0a0a0a] p-10 shadow-[0_0_40px_rgba(255,122,89,0.12)]">
 
-        {/* TITLE */}
         <h1 className="text-center text-3xl font-bold text-[#ff7a59]">
           The Owensboro App
         </h1>
@@ -22,7 +47,6 @@ export default function Page() {
           Sign in to manage your platform
         </p>
 
-        {/* FORM */}
         <div className="mt-10 space-y-6">
 
           {/* EMAIL */}
@@ -33,8 +57,10 @@ export default function Page() {
 
             <input
               type="email"
+              value={email}
+              onChange={(e)=>setEmail(e.target.value)}
               placeholder="Enter your email"
-              className="mt-2 w-full rounded-xl border border-white/25 bg-black px-4 py-3 text-white outline-none transition focus:border-[#ff7a59] focus:ring-1 focus:ring-[#ff7a59]"
+              className="mt-2 w-full rounded-xl border border-white/25 bg-black px-4 py-3 text-white outline-none focus:border-[#ff7a59]"
             />
           </div>
 
@@ -47,8 +73,10 @@ export default function Page() {
             <div className="relative mt-2">
               <input
                 type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e)=>setPassword(e.target.value)}
                 placeholder="Enter password"
-                className="w-full rounded-xl border border-white/25 bg-black px-4 py-3 pr-12 text-white outline-none transition focus:border-[#ff7a59] focus:ring-1 focus:ring-[#ff7a59]"
+                className="w-full rounded-xl border border-white/25 bg-black px-4 py-3 pr-12 text-white outline-none focus:border-[#ff7a59]"
               />
 
               <button
@@ -61,9 +89,17 @@ export default function Page() {
             </div>
           </div>
 
+          {error && (
+            <p className="text-sm text-red-400">{error}</p>
+          )}
+
           {/* LOGIN BUTTON */}
-          <button className="w-full rounded-xl bg-[#e8dcc7] py-3 font-semibold text-black transition hover:bg-[#ff7a59] hover:text-white">
-            Login
+          <button
+            onClick={handleLogin}
+            disabled={loading}
+            className="w-full rounded-xl bg-[#e8dcc7] py-3 font-semibold text-black transition hover:bg-[#ff7a59] hover:text-white"
+          >
+            {loading ? "Logging in..." : "Login"}
           </button>
 
         </div>

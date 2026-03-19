@@ -1,158 +1,331 @@
-const banners = [
-  {
-    id: 1,
-    title: "Restore D7 Campaign",
-    placement: "Homepage Hero",
-    status: "Active",
-    image:
-      "https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&w=400&q=80",
-  },
-  {
-    id: 2,
-    title: "TOA Visual Promotion",
-    placement: "Homepage Secondary",
-    status: "Scheduled",
-    image:
-      "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=400&q=80",
-  },
-  {
-    id: 3,
-    title: "Summer Event Spotlight",
-    placement: "Top Featured Strip",
-    status: "Draft",
-    image:
-      "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=400&q=80",
-  },
-];
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+  collection,
+  getDocs,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+} from "firebase/firestore";
+import {
+  ref,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject,
+} from "firebase/storage";
+
+import { db, storage } from "@/lib/firebaseServices";
+
+/* TYPES */
+type Category = { id: string; name: string };
+type Product = { id: string; name: string };
+
+type Banner = {
+  id: string;
+  title: string;
+  categoryId: string;
+  productId: string;
+  category: string;
+  product: string;
+  image: string;
+};
 
 export default function Page() {
+  const [banners, setBanners] = useState<Banner[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Banner | null>(null);
+  const [deleting, setDeleting] = useState<Banner | null>(null);
+
+  const [loading, setLoading] = useState(false);
+
+  const [file, setFile] = useState<File | null>(null);
+
+  const [form, setForm] = useState({
+    title: "",
+    categoryId: "",
+    productId: "",
+  });
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const bannerSnap = await getDocs(collection(db, "Banner"));
+      const catSnap = await getDocs(collection(db, "Catagories"));
+      const prodSnap = await getDocs(collection(db, "Products"));
+
+      const cats = catSnap.docs.map((d) => ({
+        id: d.id,
+        name: d.data().catagoryName,
+      }));
+
+      const prods = prodSnap.docs.map((d) => ({
+        id: d.id,
+        name: d.data().productName,
+      }));
+
+      const data = bannerSnap.docs.map((d) => {
+        const x = d.data();
+        const cat = cats.find((c) => c.id === x.CatagoryRef?.id);
+        const prod = prods.find((p) => p.id === x.productRef?.id);
+
+        return {
+          id: d.id,
+          title: x.bannerName,
+          categoryId: x.CatagoryRef?.id || "",
+          productId: x.productRef?.id || "",
+          category: cat?.name || "",
+          product: prod?.name || "",
+          image: x.image,
+        };
+      });
+
+      setBanners(data);
+      setCategories(cats);
+      setProducts(prods);
+    };
+
+    fetchData();
+  }, []);
+
+  const uploadImage = async () => {
+    if (!file) return "";
+    const r = ref(storage, `banners/${Date.now()}-${file.name}`);
+    await uploadBytes(r, file);
+    return await getDownloadURL(r);
+  };
+
+  const deleteImage = async (url: string) => {
+    try {
+      await deleteObject(ref(storage, url));
+    } catch {}
+  };
+
+  const handleAdd = async () => {
+    if (!form.title || !form.categoryId || !form.productId) return;
+
+    setLoading(true);
+
+    const imageUrl = await uploadImage();
+
+    const docRef = await addDoc(collection(db, "Banner"), {
+      bannerName: form.title,
+      CatagoryRef: doc(db, "Catagories", form.categoryId),
+      productRef: doc(db, "Products", form.productId),
+      image: imageUrl,
+    });
+
+    setBanners((prev) => [
+      {
+        id: docRef.id,
+        title: form.title,
+        categoryId: form.categoryId,
+        productId: form.productId,
+        category:
+          categories.find((c) => c.id === form.categoryId)?.name || "",
+        product:
+          products.find((p) => p.id === form.productId)?.name || "",
+        image: imageUrl,
+      },
+      ...prev,
+    ]);
+
+    setLoading(false);
+    closeModal();
+  };
+
+  const handleUpdate = async () => {
+    if (!editing) return;
+
+    setLoading(true);
+
+    let imageUrl = editing.image;
+
+    if (file) {
+      await deleteImage(editing.image);
+      imageUrl = await uploadImage();
+    }
+
+    await updateDoc(doc(db, "Banner", editing.id), {
+      bannerName: form.title,
+      CatagoryRef: doc(db, "Catagories", form.categoryId),
+      productRef: doc(db, "Products", form.productId),
+      image: imageUrl,
+    });
+
+    setBanners((prev) =>
+      prev.map((b) =>
+        b.id === editing.id
+          ? { ...b, ...form, image: imageUrl }
+          : b
+      )
+    );
+
+    setLoading(false);
+    closeModal();
+  };
+
+  const confirmDelete = async () => {
+    if (!deleting) return;
+
+    setLoading(true);
+
+    await deleteDoc(doc(db, "Banner", deleting.id));
+    await deleteImage(deleting.image);
+
+    setBanners((prev) => prev.filter((b) => b.id !== deleting.id));
+
+    setLoading(false);
+    setDeleting(null);
+  };
+
+  const closeModal = () => {
+    setAdding(false);
+    setEditing(null);
+    setFile(null);
+    setForm({ title: "", categoryId: "", productId: "" });
+  };
+
   return (
     <div className="px-4 pt-6 pb-10 md:px-8">
-      <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
-        <div>
-          <h1 className="text-4xl font-bold tracking-tight text-[#ff7a59] md:text-5xl">
-            Banner
-          </h1>
-          <p className="mt-2 text-lg font-medium text-[#e8dcc7] md:text-xl">
-            Manage promotional banners displayed across the platform.
-          </p>
-        </div>
 
-        <button className="inline-flex h-11 items-center justify-center rounded-xl border border-[#ff7a59] px-5 text-sm font-semibold text-[#ff7a59] transition hover:bg-[#ff7a59] hover:text-white">
+      {/* HEADER */}
+      <div className="flex justify-between mb-8">
+        <h1 className="text-4xl font-bold text-[#ff7a59]">Banner</h1>
+
+        <button
+          onClick={() => setAdding(true)}
+          className="border border-[#ff7a59] px-5 py-2 rounded-xl text-[#ff7a59] hover:bg-[#ff7a59] hover:text-white"
+        >
           Add Banner
         </button>
       </div>
 
-      <section className="mt-8 rounded-[28px] border border-[#ff7a59]/70 bg-[#0a0a0a] p-5 md:p-6">
-        <div className="mb-5">
-          <h2 className="text-2xl font-bold text-[#ff7a59] md:text-4xl">
-            Banner Library
-          </h2>
-          <p className="mt-2 max-w-4xl text-sm font-medium leading-6 text-[#f3ead7] md:text-base">
-            Upload, update, and manage visual banners for featured campaigns,
-            homepage placements, and promotional sections.
-          </p>
-        </div>
-
-        <div className="space-y-4">
-          {banners.map((banner) => (
-            <BannerRow
-              key={banner.id}
-              title={banner.title}
-              placement={banner.placement}
-              status={banner.status}
-              image={banner.image}
+      {/* LIST */}
+  <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+  {banners.map((b) => (
+    <div
+      key={b.id}
+      className="group flex flex-col justify-between rounded-2xl bg-[#ece2cb] p-3 text-black shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/10"
+    >
+      {/* TOP */}
+      <div>
+        {b.image && (
+          <div className="overflow-hidden rounded-xl">
+            <img
+              src={b.image}
+              className="mb-3 h-32 w-full object-cover border border-black/10 transition duration-300 group-hover:scale-105"
             />
-          ))}
-        </div>
+          </div>
+        )}
 
-        <Pagination />
-      </section>
+        <h3 className="text-base font-semibold md:text-lg truncate group-hover:text-[#ff7a59] transition">
+          {b.title}
+        </h3>
+
+        <p className="mt-1 text-xs text-black/50 md:text-sm truncate">
+          {b.category} • {b.product}
+        </p>
+      </div>
+
+      {/* ACTIONS */}
+      <div className="mt-4 flex gap-2">
+        <button
+          onClick={() => {
+            setEditing(b);
+            setForm({
+              title: b.title,
+              categoryId: b.categoryId,
+              productId: b.productId,
+            });
+          }}
+          className="w-full inline-flex items-center justify-center rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:shadow-md md:text-sm"
+        >
+          Update
+        </button>
+
+        <button
+          onClick={() => setDeleting(b)}
+          className="w-full inline-flex items-center justify-center rounded-lg border border-red-400/40 px-3 py-2 text-xs font-semibold text-red-500 transition-all duration-200 hover:scale-[1.03] hover:bg-red-500 hover:text-white hover:shadow-md md:text-sm"
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  ))}
+</div>
+
+      {/* ADD / EDIT MODAL */}
+      {(adding || editing) && (
+        <Modal title="Add Banner" onClose={closeModal}>
+
+          <Input label="Title" value={form.title} onChange={(v:any)=>setForm({...form,title:v})} />
+
+          <Select value={form.categoryId} onChange={(v:any)=>setForm({...form,categoryId:v})} options={categories} placeholder="Select category"/>
+
+          <Select value={form.productId} onChange={(v:any)=>setForm({...form,productId:v})} options={products} placeholder="Select product"/>
+
+          <input type="file" onChange={(e)=>setFile(e.target.files?.[0]||null)} className="mt-4"/>
+
+          <button
+            onClick={adding ? handleAdd : handleUpdate}
+            disabled={loading}
+            className="mt-6 w-full bg-[#ff7a59] text-white py-3 rounded-xl flex justify-center items-center"
+          >
+            {loading ? <Spinner /> : adding ? "Create Banner" : "Update Banner"}
+          </button>
+        </Modal>
+      )}
+
+      {/* DELETE MODAL */}
+      {deleting && (
+        <Modal title="Delete Banner" onClose={() => setDeleting(null)}>
+          <p className="text-black">
+            Are you sure you want to delete <b>{deleting.title}</b>?
+          </p>
+
+          <div className="flex gap-3 mt-6">
+            <button
+              onClick={() => setDeleting(null)}
+              className="w-full border py-2 rounded-lg"
+            >
+              Cancel
+            </button>
+
+            <button
+              onClick={confirmDelete}
+              disabled={loading}
+              className="w-full bg-red-500 text-white py-2 rounded-lg flex justify-center items-center"
+            >
+              {loading ? <Spinner /> : "Delete"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
 
-function BannerRow({
-  title,
-  placement,
-  status,
-  image,
-}: {
-  title: string;
-  placement: string;
-  status: string;
-  image: string;
-}) {
-  const statusClasses =
-    status === "Active"
-      ? "bg-green-100 text-green-700"
-      : status === "Scheduled"
-      ? "bg-blue-100 text-blue-700"
-      : "bg-yellow-100 text-yellow-700";
-
+/* ROW */
+function BannerRow({ title, category, product, image, onEdit, onDelete }: any) {
   return (
-    <div className="group flex flex-col gap-4 rounded-2xl border border-[#ff7a59]/40 bg-[#111111] p-4 transition hover:border-[#ff7a59] hover:shadow-lg md:flex-row md:items-center md:justify-between">
-      <div className="flex items-center gap-4">
-        <div className="h-20 w-28 overflow-hidden rounded-xl bg-[#1b1b1b] md:h-24 md:w-36">
-          <img
-            src={image}
-            alt={title}
-            className="h-full w-full object-cover"
-          />
-        </div>
-
-        <div className="min-w-0">
-          <h3 className="truncate text-base font-semibold text-white md:text-lg">
-            {title}
-          </h3>
-
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs md:text-sm">
-            <span className="rounded-full bg-[#ece2cb] px-2.5 py-1 font-medium text-black">
-              {placement}
-            </span>
-
-            <span
-              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClasses}`}
-            >
-              {status}
-            </span>
-          </div>
+    <div className="flex justify-between bg-[#ece2cb] p-4 rounded-xl">
+      <div className="flex gap-4 items-center">
+        <img src={image} className="h-16 w-24 rounded-lg object-cover"/>
+        <div>
+          <h3 className="font-semibold text-black">{title}</h3>
+          <p className="text-sm text-black/70">{category} • {product}</p>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 self-start md:self-center">
-        <button className="inline-flex items-center gap-2 rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white transition hover:opacity-90 md:text-sm">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-4 w-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M16.862 3.487a2.1 2.1 0 1 1 2.97 2.97L8.62 17.67 4 18.5l.83-4.62L16.862 3.487Z"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M14.5 5.85 18.15 9.5"
-            />
-          </svg>
+      <div className="flex gap-2">
+        <button onClick={onEdit} className="bg-[#ff7a59] text-white px-3 py-1 rounded">
           Update
         </button>
-
-        <button className="inline-flex items-center gap-2 rounded-lg border border-red-400/40 px-3 py-2 text-xs font-semibold text-red-500 transition hover:bg-red-500 hover:text-white md:text-sm">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-4 w-4"
-            fill="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM7 9h2v8H7V9Zm-1 11h12a2 2 0 0 0 2-2V8H4v10a2 2 0 0 0 2 2Z" />
-          </svg>
+        <button onClick={onDelete} className="border border-red-400 text-red-500 px-3 py-1 rounded">
           Delete
         </button>
       </div>
@@ -160,35 +333,44 @@ function BannerRow({
   );
 }
 
-function Pagination() {
+/* UI */
+function Modal({ children, title, onClose }: any) {
   return (
-    <div className="mt-6 flex flex-col gap-3 border-t border-white/10 pt-5 md:flex-row md:items-center md:justify-between">
-      <p className="text-sm text-[#f3ead7]/70">
-        Showing <span className="font-semibold text-[#f3ead7]">1–3</span> of{" "}
-        <span className="font-semibold text-[#f3ead7]">12</span> banners
-      </p>
-
-      <div className="flex items-center gap-2">
-        <button className="rounded-lg border border-white/10 px-3 py-2 text-sm text-[#f3ead7]/70 transition hover:border-[#ff7a59]/40 hover:text-[#f3ead7]">
-          Previous
-        </button>
-
-        <button className="h-10 min-w-10 rounded-lg bg-[#ff7a59] px-3 text-sm font-semibold text-white">
-          1
-        </button>
-
-        <button className="h-10 min-w-10 rounded-lg border border-white/10 px-3 text-sm text-[#f3ead7] transition hover:border-[#ff7a59]/40 hover:text-white">
-          2
-        </button>
-
-        <button className="h-10 min-w-10 rounded-lg border border-white/10 px-3 text-sm text-[#f3ead7] transition hover:border-[#ff7a59]/40 hover:text-white">
-          3
-        </button>
-
-        <button className="rounded-lg border border-white/10 px-3 py-2 text-sm text-[#f3ead7] transition hover:border-[#ff7a59]/40 hover:text-white">
-          Next
-        </button>
+    <div className="fixed inset-0 bg-black/70 flex justify-center items-center">
+      <div className="bg-[#e8dcc7] p-6 rounded-3xl w-[90%] max-w-lg text-black">
+        <div className="flex justify-between mb-4">
+          <h2 className="text-xl font-bold text-[#ff7a59]">{title}</h2>
+          <button onClick={onClose}>✖</button>
+        </div>
+        {children}
       </div>
     </div>
+  );
+}
+
+function Input({ label, value, onChange }: any) {
+  return (
+    <div className="mt-3">
+      <label className="font-semibold text-black">{label}</label>
+      <input value={value} onChange={(e)=>onChange(e.target.value)}
+        className="w-full border border-[#ff7a59] text-black rounded-xl p-3 mt-1"/>
+    </div>
+  );
+}
+
+function Select({ value, onChange, options, placeholder }: any) {
+  return (
+    <select value={value} onChange={(e)=>onChange(e.target.value)}
+      className="w-full border border-[#ff7a59] text-black rounded-xl p-3 mt-3">
+      <option value="">{placeholder}</option>
+      {options.map((o:any)=><option key={o.id} value={o.id}>{o.name}</option>)}
+    </select>
+  );
+}
+
+/* SPINNER */
+function Spinner() {
+  return (
+    <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
   );
 }

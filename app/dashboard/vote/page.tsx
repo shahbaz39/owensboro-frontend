@@ -1,14 +1,102 @@
-const votes = [
-  {
-    id: 1,
-    title: "Vote Your Favorite",
-    link: "https://example.com",
-  },
-];
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+  collection,
+  getDocs,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+} from "firebase/firestore";
+
+import { db } from "@/lib/firebaseServices";
+
+/* TYPES */
+type Vote = {
+  id: string;
+  title: string;
+  link: string;
+};
 
 export default function Page() {
+  const [votes, setVotes] = useState<Vote[]>([]);
+  const [form, setForm] = useState({ title: "", link: "" });
+
+  const [editing, setEditing] = useState<Vote | null>(null);
+  const [deleting, setDeleting] = useState<Vote | null>(null);
+
+  const [loading, setLoading] = useState(false);
+
+  /* FETCH */
+  useEffect(() => {
+    const fetchVotes = async () => {
+      const snap = await getDocs(collection(db, "vote"));
+      const data = snap.docs.map((d) => ({
+        id: d.id,
+        title: d.data().title,
+        link: d.data().link,
+      }));
+      setVotes(data);
+    };
+
+    fetchVotes();
+  }, []);
+
+  /* ADD / UPDATE */
+  const handleSubmit = async () => {
+    if (!form.title || !form.link) return;
+
+    setLoading(true);
+
+    if (editing) {
+      await updateDoc(doc(db, "vote", editing.id), {
+        title: form.title,
+        link: form.link,
+      });
+
+      setVotes((prev) =>
+        prev.map((v) =>
+          v.id === editing.id ? { ...v, ...form } : v
+        )
+      );
+    } else {
+      const docRef = await addDoc(collection(db, "vote"), {
+        title: form.title,
+        link: form.link,
+      });
+
+      setVotes((prev) => [
+        { id: docRef.id, ...form },
+        ...prev,
+      ]);
+    }
+
+    setLoading(false);
+    setEditing(null);
+    setForm({ title: "", link: "" });
+  };
+
+  /* DELETE */
+  const confirmDelete = async () => {
+    if (!deleting) return;
+
+    setLoading(true);
+
+    await deleteDoc(doc(db, "vote", deleting.id));
+
+    setVotes((prev) =>
+      prev.filter((v) => v.id !== deleting.id)
+    );
+
+    setDeleting(null);
+    setLoading(false);
+  };
+
   return (
     <div className="px-4 pt-6 pb-10 md:px-8">
+
+      {/* HEADER */}
       <div>
         <h1 className="text-4xl font-bold tracking-tight text-[#ff7a59] md:text-5xl">
           Vote For Your Favorite
@@ -20,10 +108,11 @@ export default function Page() {
       </div>
 
       <div className="mt-10 grid gap-10 lg:grid-cols-2">
-        {/* LEFT FORM */}
+
+        {/* FORM */}
         <div className="rounded-2xl border border-[#ff7a59]/60 bg-[#0a0a0a] p-6">
           <h2 className="mb-6 text-xl font-semibold text-white">
-            What would you like to submit?
+            {editing ? "Update Vote" : "What would you like to submit?"}
           </h2>
 
           <div className="space-y-5">
@@ -33,8 +122,10 @@ export default function Page() {
               </label>
 
               <input
-                type="text"
-                placeholder="Enter title"
+                value={form.title}
+                onChange={(e) =>
+                  setForm({ ...form, title: e.target.value })
+                }
                 className="mt-2 w-full rounded-lg border border-white/20 bg-black px-4 py-3 text-sm text-white outline-none focus:border-[#ff7a59]"
               />
             </div>
@@ -45,81 +136,116 @@ export default function Page() {
               </label>
 
               <input
-                type="text"
-                placeholder="Enter link"
+                value={form.link}
+                onChange={(e) =>
+                  setForm({ ...form, link: e.target.value })
+                }
                 className="mt-2 w-full rounded-lg border border-white/20 bg-black px-4 py-3 text-sm text-white outline-none focus:border-[#ff7a59]"
               />
             </div>
 
-            <button className="mt-2 inline-flex items-center justify-center rounded-lg bg-[#ff7a59] px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90">
-              Submit
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              className="mt-2 inline-flex items-center justify-center rounded-lg bg-[#ff7a59] px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90"
+            >
+              {loading ? <Spinner /> : editing ? "Update" : "Submit"}
             </button>
           </div>
         </div>
 
-        {/* RIGHT PREVIEW */}
+        {/* LIST */}
         <div className="space-y-4">
           {votes.map((vote) => (
-            <VoteCard key={vote.id} {...vote} />
+            <VoteCard
+              key={vote.id}
+              {...vote}
+              onEdit={() => {
+                setEditing(vote);
+                setForm({ title: vote.title, link: vote.link });
+              }}
+              onDelete={() => setDeleting(vote)}
+            />
           ))}
         </div>
       </div>
+
+      {/* DELETE MODAL */}
+      {deleting && (
+        <Modal title="Delete Vote" onClose={() => setDeleting(null)}>
+          <p className="text-black">
+            Delete <b>{deleting.title}</b>?
+          </p>
+
+          <div className="flex gap-3 mt-6">
+            <button
+              onClick={() => setDeleting(null)}
+              className="w-full border py-2 rounded-lg"
+            >
+              Cancel
+            </button>
+
+            <button
+              onClick={confirmDelete}
+              disabled={loading}
+              className="w-full bg-red-500 text-white py-2 rounded-lg flex justify-center"
+            >
+              {loading ? <Spinner /> : "Delete"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
 
-function VoteCard({
-  title,
-  link,
-}: {
-  title: string;
-  link: string;
-}) {
+/* CARD */
+function VoteCard({ title, link, onEdit, onDelete }: any) {
   return (
     <div className="rounded-xl bg-[#ff7a59] p-5 text-white">
       <div className="flex items-center justify-between">
         <span className="text-sm font-semibold md:text-base">{title}</span>
 
         <div className="flex items-center gap-3">
-          {/* EDIT */}
-          <button className="hover:opacity-80">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="white"
-              strokeWidth="2"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M16.862 3.487a2.1 2.1 0 1 1 2.97 2.97L8.62 17.67 4 18.5l.83-4.62L16.862 3.487Z"
-              />
-            </svg>
+          <button onClick={onEdit}>
+            ✏️
           </button>
 
-          {/* DELETE */}
-          <button className="hover:opacity-80">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5"
-              fill="white"
-              viewBox="0 0 24 24"
-            >
-              <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM7 9h2v8H7V9Zm-1 11h12a2 2 0 0 0 2-2V8H4v10a2 2 0 0 0 2 2Z" />
-            </svg>
+          <button onClick={onDelete}>
+            🗑️
           </button>
         </div>
       </div>
 
       <a
         href={link}
-        className="mt-2 block text-xs text-white/80 underline"
         target="_blank"
+        className="mt-2 block text-xs text-white/80 underline"
       >
         {link}
       </a>
     </div>
+  );
+}
+
+/* MODAL */
+function Modal({ children, title, onClose }: any) {
+  return (
+    <div className="fixed inset-0 bg-black/70 flex justify-center items-center">
+      <div className="bg-[#e8dcc7] p-6 rounded-3xl w-[90%] max-w-lg text-black">
+        <div className="flex justify-between mb-4">
+          <h2 className="text-xl font-bold text-[#ff7a59]">{title}</h2>
+          <button onClick={onClose}>✖</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* SPINNER */
+function Spinner() {
+  return (
+    <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
   );
 }
