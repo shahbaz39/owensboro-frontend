@@ -15,7 +15,8 @@ import {
   getDownloadURL,
   deleteObject,
 } from "firebase/storage";
-
+import { setDoc } from "firebase/firestore";
+import { query, orderBy, limit } from "firebase/firestore";
 import { db, storage } from "@/lib/firebaseServices";
 
 /* TYPES */
@@ -35,6 +36,10 @@ type Listing = {
   time: string;
   contact: string;
   image?: string;
+  // ✅ NEW
+  websiteUrl?: string;
+  facebookUrl?: string;
+  locationUrl?: string;
 };
 
 type ListingForm = {
@@ -46,6 +51,10 @@ type ListingForm = {
   shortDescription: string;
   time: string;
   contact: string;
+  // ✅ MUST EXIST HERE
+  websiteUrl: string;
+  facebookUrl: string;
+  locationUrl: string;
 };
 
 const EMPTY_FORM: ListingForm = {
@@ -57,6 +66,11 @@ const EMPTY_FORM: ListingForm = {
   shortDescription: "",
   time: "",
   contact: "",
+
+  // ✅ NEW
+  websiteUrl: "",
+  facebookUrl: "",
+  locationUrl: "",
 };
 
 export default function Page() {
@@ -73,6 +87,7 @@ export default function Page() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const newDocRef = doc(collection(db, "Products"));
 
   const [form, setForm] = useState<ListingForm>(EMPTY_FORM);
 
@@ -108,7 +123,10 @@ export default function Page() {
 
         const subs: SubCategory[] = subSnap.docs.map((d) => ({
           id: d.id,
-          name: d.data().name || d.data().subCategoryName || "Untitled Sub Category",
+          name:
+            d.data().name ||
+            d.data().subCategoryName ||
+            "Untitled Sub Category",
           categoryId: d.data().catagoriesRef?.id || "",
         }));
 
@@ -134,6 +152,10 @@ export default function Page() {
             time: x.time || "",
             contact: x.contactInfo || "",
             image: x.imageUrl || "",
+            // ✅ NEW
+            websiteUrl: x.websiteUrl || "",
+            facebookUrl: x.facebookUrl || "",
+            locationUrl: x.locationUrl || "",
           };
         });
 
@@ -160,7 +182,7 @@ export default function Page() {
   /* HELPERS */
   const filteredSubs = useMemo(
     () => subCategories.filter((s) => s.categoryId === form.categoryId),
-    [subCategories, form.categoryId]
+    [subCategories, form.categoryId],
   );
 
   const closeModal = () => {
@@ -194,6 +216,10 @@ export default function Page() {
       shortDescription: listing.shortDescription || "",
       time: listing.time || "",
       contact: listing.contact || "",
+      // ✅ NEW
+      websiteUrl: listing.websiteUrl || "",
+      facebookUrl: listing.facebookUrl || "",
+      locationUrl: listing.locationUrl || "",
     });
   };
 
@@ -226,6 +252,20 @@ export default function Page() {
     }
   };
 
+  const getNextOrder = async () => {
+    const q = query(
+      collection(db, "Products"),
+      orderBy("order", "desc"),
+      limit(1),
+    );
+
+    const snap = await getDocs(q);
+
+    if (snap.empty) return 1;
+
+    const lastOrder = snap.docs[0].data().order || 0;
+    return lastOrder + 1;
+  };
   /* ADD */
   const handleAdd = async () => {
     const validationError = validateForm();
@@ -242,7 +282,10 @@ export default function Page() {
       const catRef = doc(db, "Catagories", form.categoryId);
       const subRef = doc(db, "SubCatagories", form.subCategoryId);
 
-      const docRef = await addDoc(collection(db, "Products"), {
+      // ✅ CREATE DOC REF HERE (IMPORTANT)
+      const newDocRef = doc(collection(db, "Products"));
+    const nextOrder = await getNextOrder();
+      await setDoc(newDocRef, {
         productName: form.title,
         catagoryRef: catRef,
         subCatagoryRef: subRef,
@@ -252,7 +295,14 @@ export default function Page() {
         time: form.time,
         contactInfo: form.contact,
         imageUrl,
+        websiteUrl: form.websiteUrl,
+        facebookUrl: form.facebookUrl,
+        locationUrl: form.locationUrl,
         createdAt: new Date(),
+
+        // ✅ THIS IS WHAT YOU WANT
+        productRef: newDocRef,
+        order: nextOrder,
       });
 
       const cat = categories.find((c) => c.id === form.categoryId);
@@ -260,7 +310,7 @@ export default function Page() {
 
       setListings((prev) => [
         {
-          id: docRef.id,
+          id: newDocRef.id,
           title: form.title,
           category: cat?.name || "",
           subCategory: sub?.name || "",
@@ -272,6 +322,9 @@ export default function Page() {
           time: form.time,
           contact: form.contact,
           image: imageUrl,
+          websiteUrl: form.websiteUrl,
+          facebookUrl: form.facebookUrl,
+          locationUrl: form.locationUrl,
         },
         ...prev,
       ]);
@@ -324,6 +377,10 @@ export default function Page() {
         time: form.time,
         contactInfo: form.contact,
         imageUrl: nextImageUrl,
+        // ✅ NEW
+        websiteUrl: form.websiteUrl,
+        facebookUrl: form.facebookUrl,
+        locationUrl: form.locationUrl,
       });
 
       const cat = categories.find((c) => c.id === form.categoryId);
@@ -345,9 +402,13 @@ export default function Page() {
                 time: form.time,
                 contact: form.contact,
                 image: nextImageUrl,
+                // ✅ ADD THIS
+                websiteUrl: form.websiteUrl,
+                facebookUrl: form.facebookUrl,
+                locationUrl: form.locationUrl,
               }
-            : l
-        )
+            : l,
+        ),
       );
 
       closeModal();
@@ -384,8 +445,8 @@ export default function Page() {
   const currentImagePreview = file
     ? URL.createObjectURL(file)
     : editing && !removeExistingImage
-    ? editing.image || ""
-    : "";
+      ? editing.image || ""
+      : "";
 
   return (
     <div className="px-6 pt-6 pb-10">
@@ -417,54 +478,83 @@ export default function Page() {
         </div>
       ) : (
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-  {paginatedData.map((l) => (
-    <div
-      key={l.id}
-      className="group flex flex-col justify-between rounded-2xl bg-[#ece2cb] p-3 text-black shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/10"
-    >
-      {/* TOP */}
-      <div>
-        {l.image && (
-          <div className="overflow-hidden rounded-xl">
-            <img
-              src={l.image}
-              className="mb-3 h-32 w-full object-cover border border-black/10 transition duration-300 group-hover:scale-105"
-            />
-          </div>
-        )}
+          {paginatedData.map((l) => (
+            <div
+              key={l.id}
+              className="group flex flex-col justify-between rounded-2xl bg-[#ece2cb] p-3 text-black shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/10"
+            >
+              {/* TOP */}
+              <div>
+                {l.image && (
+                  <div className="overflow-hidden rounded-xl">
+                    <img
+                      src={l.image}
+                      className="mb-3 h-32 w-full object-cover border border-black/10 transition duration-300 group-hover:scale-105"
+                    />
+                  </div>
+                )}
 
-        <h3 className="text-base font-semibold md:text-lg truncate group-hover:text-[#ff7a59] transition">
-          {l.title}
-        </h3>
+                <h3 className="text-base font-semibold md:text-lg truncate group-hover:text-[#ff7a59] transition">
+                  {l.title}
+                </h3>
 
-        <p className="mt-1 text-xs text-black/50 md:text-sm truncate">
-          {l.category} • {l.subCategory}
-        </p>
+                <p className="mt-1 text-xs text-black/50 md:text-sm truncate">
+                  {l.category} • {l.subCategory}
+                </p>
 
-        <p className="mt-1 text-xs text-black/40 truncate">
-          📍 {l.location}
-        </p>
-      </div>
+                <p className="mt-1 text-xs text-black/40 truncate">
+                  📍 {l.location}
+                </p>
+                {l.websiteUrl && (
+                  <a
+                    href={l.websiteUrl}
+                    target="_blank"
+                    className="mt-2 text-xs text-blue-600 underline block"
+                  >
+                    🌐 Website
+                  </a>
+                )}
 
-      {/* ACTIONS */}
-      <div className="mt-4 flex gap-2">
-        <button
-          onClick={() => openEditModal(l)}
-          className="w-full inline-flex items-center justify-center rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:shadow-md md:text-sm"
-        >
-          Update
-        </button>
+                {l.facebookUrl && (
+                  <a
+                    href={l.facebookUrl}
+                    target="_blank"
+                    className="text-xs text-blue-600 underline block"
+                  >
+                    👍 Facebook
+                  </a>
+                )}
 
-        <button
-          onClick={() => setDeleting(l)}
-          className="w-full inline-flex items-center justify-center rounded-lg border border-red-400/40 px-3 py-2 text-xs font-semibold text-red-500 transition-all duration-200 hover:scale-[1.03] hover:bg-red-500 hover:text-white hover:shadow-md md:text-sm"
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  ))}
-</div>
+                {l.locationUrl && (
+                  <a
+                    href={l.locationUrl}
+                    target="_blank"
+                    className="text-xs text-blue-600 underline block"
+                  >
+                    📍 View Location
+                  </a>
+                )}
+              </div>
+
+              {/* ACTIONS */}
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => openEditModal(l)}
+                  className="w-full inline-flex items-center justify-center rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:shadow-md md:text-sm"
+                >
+                  Update
+                </button>
+
+                <button
+                  onClick={() => setDeleting(l)}
+                  className="w-full inline-flex items-center justify-center rounded-lg border border-red-400/40 px-3 py-2 text-xs font-semibold text-red-500 transition-all duration-200 hover:scale-[1.03] hover:bg-red-500 hover:text-white hover:shadow-md md:text-sm"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       {/* PAGINATION */}
@@ -574,6 +664,29 @@ export default function Page() {
               setForm((prev) => ({ ...prev, contact: v }))
             }
           />
+          <Input
+            label="Website URL"
+            value={form.websiteUrl}
+            onChange={(v: string) =>
+              setForm((prev) => ({ ...prev, websiteUrl: v }))
+            }
+          />
+
+          <Input
+            label="Facebook URL"
+            value={form.facebookUrl}
+            onChange={(v: string) =>
+              setForm((prev) => ({ ...prev, facebookUrl: v }))
+            }
+          />
+
+          <Input
+            label="Location URL (Google Maps)"
+            value={form.locationUrl}
+            onChange={(v: string) =>
+              setForm((prev) => ({ ...prev, locationUrl: v }))
+            }
+          />
 
           {/* IMAGE */}
           <div className="mt-5">
@@ -640,8 +753,8 @@ export default function Page() {
                 ? "Creating..."
                 : "Saving..."
               : adding
-              ? "Create Listing"
-              : "Save Listing"}
+                ? "Create Listing"
+                : "Save Listing"}
           </button>
         </Modal>
       )}
