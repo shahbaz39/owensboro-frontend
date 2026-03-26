@@ -93,7 +93,7 @@ export default function Page() {
 
   /* PAGINATION */
   const [page, setPage] = useState(1);
-  const perPage = 10;
+  const perPage = 12;
 
   const totalPages = Math.max(1, Math.ceil(listings.length / perPage));
   const safePage = Math.min(page, totalPages);

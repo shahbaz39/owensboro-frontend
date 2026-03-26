@@ -38,7 +38,7 @@ export default function Page() {
 
   // ✅ PAGINATION
   const [page, setPage] = useState(1);
-  const perPage = 10;
+  const perPage = 12;
 
   const paginatedData = subCategories.slice(
     (page - 1) * perPage,
@@ -321,7 +321,7 @@ function Input({ label, value, onChange }: any) {
 }
 
 function Pagination({ total, page, setPage }: any) {
-  const perPage = 10;
+  const perPage = 12;
   const totalPages = Math.ceil(total / perPage);
 
   return (

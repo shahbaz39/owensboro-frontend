@@ -9,6 +9,7 @@ const menuItems = [
   { name: "Sub Category", path: "/dashboard/sub-category" },
   { name: "Listings", path: "/dashboard/listings" },
   { name: "Banner", path: "/dashboard/banner" },
+  { name: "Header Image", path: "/dashboard/header-image" },
   { name: "Challenge", path: "/dashboard/challenge" },
   { name: "Vote for Favourite", path: "/dashboard/vote" },
   { name: "Contact Support", path: "/dashboard/contact" },
