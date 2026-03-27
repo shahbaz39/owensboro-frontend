@@ -6,8 +6,11 @@ import {
   getDocs,
   deleteDoc,
   doc,
-  addDoc,
   updateDoc,
+  setDoc,
+  query,
+  orderBy,
+  limit,
 } from "firebase/firestore";
 import {
   ref,
@@ -15,8 +18,7 @@ import {
   getDownloadURL,
   deleteObject,
 } from "firebase/storage";
-import { setDoc } from "firebase/firestore";
-import { query, orderBy, limit } from "firebase/firestore";
+
 import { db, storage } from "@/lib/firebaseServices";
 
 /* TYPES */
@@ -36,10 +38,10 @@ type Listing = {
   time: string;
   contact: string;
   image?: string;
-  // ✅ NEW
   websiteUrl?: string;
   facebookUrl?: string;
   locationUrl?: string;
+  order?: number;
 };
 
 type ListingForm = {
@@ -51,7 +53,6 @@ type ListingForm = {
   shortDescription: string;
   time: string;
   contact: string;
-  // ✅ MUST EXIST HERE
   websiteUrl: string;
   facebookUrl: string;
   locationUrl: string;
@@ -66,8 +67,6 @@ const EMPTY_FORM: ListingForm = {
   shortDescription: "",
   time: "",
   contact: "",
-
-  // ✅ NEW
   websiteUrl: "",
   facebookUrl: "",
   locationUrl: "",
@@ -81,16 +80,16 @@ export default function Page() {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<Listing | null>(null);
   const [deleting, setDeleting] = useState<Listing | null>(null);
+  const [dragged, setDragged] = useState<Listing | null>(null);
 
   const [file, setFile] = useState<File | null>(null);
   const [removeExistingImage, setRemoveExistingImage] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const newDocRef = doc(collection(db, "Products"));
 
   const [form, setForm] = useState<ListingForm>(EMPTY_FORM);
-
+  const imageCache = new Map<string, string>();
   /* PAGINATION */
   const [page, setPage] = useState(1);
   const perPage = 12;
@@ -152,16 +151,23 @@ export default function Page() {
             time: x.time || "",
             contact: x.contactInfo || "",
             image: x.imageUrl || "",
-            // ✅ NEW
             websiteUrl: x.websiteUrl || "",
             facebookUrl: x.facebookUrl || "",
             locationUrl: x.locationUrl || "",
+            order: x.order ?? 999,
           };
         });
 
-        setListings(data);
+        setListings(data.sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
         setCategories(cats);
         setSubCategories(subs);
+        data.forEach((item) => {
+          if (item.image && !imageCache.has(item.image)) {
+            const img = new Image();
+            img.src = item.image;
+            imageCache.set(item.image, item.image);
+          }
+        });
       } catch (err) {
         console.error(err);
         setError("Failed to load listings.");
@@ -192,6 +198,7 @@ export default function Page() {
     setFile(null);
     setRemoveExistingImage(false);
     setSaving(false);
+    setError("");
   };
 
   const openAddModal = () => {
@@ -200,6 +207,7 @@ export default function Page() {
     setRemoveExistingImage(false);
     setAdding(true);
     setEditing(null);
+    setError("");
   };
 
   const openEditModal = (listing: Listing) => {
@@ -216,11 +224,11 @@ export default function Page() {
       shortDescription: listing.shortDescription || "",
       time: listing.time || "",
       contact: listing.contact || "",
-      // ✅ NEW
       websiteUrl: listing.websiteUrl || "",
       facebookUrl: listing.facebookUrl || "",
       locationUrl: listing.locationUrl || "",
     });
+    setError("");
   };
 
   const validateForm = () => {
@@ -260,12 +268,12 @@ export default function Page() {
     );
 
     const snap = await getDocs(q);
-
     if (snap.empty) return 1;
 
     const lastOrder = snap.docs[0].data().order || 0;
     return lastOrder + 1;
   };
+
   /* ADD */
   const handleAdd = async () => {
     const validationError = validateForm();
@@ -281,10 +289,9 @@ export default function Page() {
       const imageUrl = await uploadImage();
       const catRef = doc(db, "Catagories", form.categoryId);
       const subRef = doc(db, "SubCatagories", form.subCategoryId);
-
-      // ✅ CREATE DOC REF HERE (IMPORTANT)
       const newDocRef = doc(collection(db, "Products"));
-    const nextOrder = await getNextOrder();
+      const nextOrder = await getNextOrder();
+
       await setDoc(newDocRef, {
         productName: form.title,
         catagoryRef: catRef,
@@ -299,8 +306,6 @@ export default function Page() {
         facebookUrl: form.facebookUrl,
         locationUrl: form.locationUrl,
         createdAt: new Date(),
-
-        // ✅ THIS IS WHAT YOU WANT
         productRef: newDocRef,
         order: nextOrder,
       });
@@ -308,26 +313,29 @@ export default function Page() {
       const cat = categories.find((c) => c.id === form.categoryId);
       const sub = subCategories.find((s) => s.id === form.subCategoryId);
 
-      setListings((prev) => [
-        {
-          id: newDocRef.id,
-          title: form.title,
-          category: cat?.name || "",
-          subCategory: sub?.name || "",
-          categoryId: form.categoryId,
-          subCategoryId: form.subCategoryId,
-          location: form.location,
-          about: form.about,
-          shortDescription: form.shortDescription,
-          time: form.time,
-          contact: form.contact,
-          image: imageUrl,
-          websiteUrl: form.websiteUrl,
-          facebookUrl: form.facebookUrl,
-          locationUrl: form.locationUrl,
-        },
-        ...prev,
-      ]);
+      setListings((prev) =>
+        [
+          {
+            id: newDocRef.id,
+            title: form.title,
+            category: cat?.name || "",
+            subCategory: sub?.name || "",
+            categoryId: form.categoryId,
+            subCategoryId: form.subCategoryId,
+            location: form.location,
+            about: form.about,
+            shortDescription: form.shortDescription,
+            time: form.time,
+            contact: form.contact,
+            image: imageUrl,
+            websiteUrl: form.websiteUrl,
+            facebookUrl: form.facebookUrl,
+            locationUrl: form.locationUrl,
+            order: nextOrder,
+          },
+          ...prev,
+        ].sort((a, b) => (a.order ?? 999) - (b.order ?? 999)),
+      );
 
       setPage(1);
       closeModal();
@@ -377,7 +385,6 @@ export default function Page() {
         time: form.time,
         contactInfo: form.contact,
         imageUrl: nextImageUrl,
-        // ✅ NEW
         websiteUrl: form.websiteUrl,
         facebookUrl: form.facebookUrl,
         locationUrl: form.locationUrl,
@@ -387,28 +394,29 @@ export default function Page() {
       const sub = subCategories.find((s) => s.id === form.subCategoryId);
 
       setListings((prev) =>
-        prev.map((l) =>
-          l.id === editing.id
-            ? {
-                ...l,
-                title: form.title,
-                category: cat?.name || "",
-                subCategory: sub?.name || "",
-                categoryId: form.categoryId,
-                subCategoryId: form.subCategoryId,
-                location: form.location,
-                about: form.about,
-                shortDescription: form.shortDescription,
-                time: form.time,
-                contact: form.contact,
-                image: nextImageUrl,
-                // ✅ ADD THIS
-                websiteUrl: form.websiteUrl,
-                facebookUrl: form.facebookUrl,
-                locationUrl: form.locationUrl,
-              }
-            : l,
-        ),
+        prev
+          .map((l) =>
+            l.id === editing.id
+              ? {
+                  ...l,
+                  title: form.title,
+                  category: cat?.name || "",
+                  subCategory: sub?.name || "",
+                  categoryId: form.categoryId,
+                  subCategoryId: form.subCategoryId,
+                  location: form.location,
+                  about: form.about,
+                  shortDescription: form.shortDescription,
+                  time: form.time,
+                  contact: form.contact,
+                  image: nextImageUrl,
+                  websiteUrl: form.websiteUrl,
+                  facebookUrl: form.facebookUrl,
+                  locationUrl: form.locationUrl,
+                }
+              : l,
+          )
+          .sort((a, b) => (a.order ?? 999) - (b.order ?? 999)),
       );
 
       closeModal();
@@ -416,6 +424,40 @@ export default function Page() {
       console.error(err);
       setError("Failed to update listing.");
       setSaving(false);
+    }
+  };
+
+  /* DRAG DROP */
+  const handleDropRow = async (target: Listing) => {
+    if (!dragged || dragged.id === target.id) return;
+
+    try {
+      const updated = [...listings];
+      const from = updated.findIndex((i) => i.id === dragged.id);
+      const to = updated.findIndex((i) => i.id === target.id);
+      if (from === -1 || to === -1) return;
+
+      const [moved] = updated.splice(from, 1);
+      updated.splice(to, 0, moved);
+
+      const reordered = updated.map((item, index) => ({
+        ...item,
+        order: index + 1,
+      }));
+
+      setListings(reordered);
+      setDragged(null);
+
+      await Promise.all(
+        reordered.map((item) =>
+          updateDoc(doc(db, "Products", item.id), {
+            order: item.order,
+          }),
+        ),
+      );
+    } catch (err) {
+      console.error(err);
+      setError("Failed to reorder listings.");
     }
   };
 
@@ -477,83 +519,76 @@ export default function Page() {
           No listings found.
         </div>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-          {paginatedData.map((l) => (
-            <div
-              key={l.id}
-              className="group flex flex-col justify-between rounded-2xl bg-[#ece2cb] p-3 text-black shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/10"
-            >
-              {/* TOP */}
-              <div>
-                {l.image && (
-                  <div className="overflow-hidden rounded-xl">
-                    <img
-                      src={l.image}
-                      className="mb-3 h-32 w-full object-cover border border-black/10 transition duration-300 group-hover:scale-105"
-                    />
-                  </div>
-                )}
+        <div className="overflow-x-auto rounded-2xl border border-white/10">
+          <table className="w-full text-left">
+            <thead className="bg-[#ece2cb] text-black">
+              <tr>
+                <th className="p-3">Image</th>
+                <th className="p-3">Title</th>
+                <th className="p-3">Category</th>
+                <th className="p-3">Location</th>
+                <th className="p-3">Order</th>
+                <th className="p-3 text-right">Actions</th>
+              </tr>
+            </thead>
 
-                <h3 className="text-base font-semibold md:text-lg truncate group-hover:text-[#ff7a59] transition">
-                  {l.title}
-                </h3>
-
-                <p className="mt-1 text-xs text-black/50 md:text-sm truncate">
-                  {l.category} • {l.subCategory}
-                </p>
-
-                <p className="mt-1 text-xs text-black/40 truncate">
-                  📍 {l.location}
-                </p>
-                {l.websiteUrl && (
-                  <a
-                    href={l.websiteUrl}
-                    target="_blank"
-                    className="mt-2 text-xs text-blue-600 underline block"
-                  >
-                    🌐 Website
-                  </a>
-                )}
-
-                {l.facebookUrl && (
-                  <a
-                    href={l.facebookUrl}
-                    target="_blank"
-                    className="text-xs text-blue-600 underline block"
-                  >
-                    👍 Facebook
-                  </a>
-                )}
-
-                {l.locationUrl && (
-                  <a
-                    href={l.locationUrl}
-                    target="_blank"
-                    className="text-xs text-blue-600 underline block"
-                  >
-                    📍 View Location
-                  </a>
-                )}
-              </div>
-
-              {/* ACTIONS */}
-              <div className="mt-4 flex gap-2">
-                <button
-                  onClick={() => openEditModal(l)}
-                  className="w-full inline-flex items-center justify-center rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:shadow-md md:text-sm"
+            <tbody>
+              {paginatedData.map((l) => (
+                <tr
+                  key={l.id}
+                  draggable
+                  onDragStart={() => setDragged(l)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => handleDropRow(l)}
+                  className="border-b border-white/10 bg-[#ece2cb] text-black transition hover:bg-[#f5ecd7]"
                 >
-                  Update
-                </button>
+                  <td className="p-3">
+                    {l.image ? (
+                      <img
+                        src={imageCache.get(l.image!) || l.image}
+                        loading="eager"
+                        className="h-12 w-12 rounded-lg object-cover border"
+                      />
+                    ) : (
+                      <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-black/10 bg-black/5 text-[10px] text-black/35">
+                        No Img
+                      </div>
+                    )}
+                  </td>
 
-                <button
-                  onClick={() => setDeleting(l)}
-                  className="w-full inline-flex items-center justify-center rounded-lg border border-red-400/40 px-3 py-2 text-xs font-semibold text-red-500 transition-all duration-200 hover:scale-[1.03] hover:bg-red-500 hover:text-white hover:shadow-md md:text-sm"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
+                  <td className="p-3 font-semibold">{l.title}</td>
+
+                  <td className="p-3 text-black/60">
+                    {l.category} • {l.subCategory}
+                  </td>
+
+                  <td className="max-w-[260px] truncate p-3 text-black/50">
+                    📍 {l.location}
+                  </td>
+
+                  <td className="p-3">{l.order ?? "-"}</td>
+
+                  <td className="p-3">
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => openEditModal(l)}
+                        className="rounded-lg bg-[#ff7a59] px-3 py-1 text-xs text-white"
+                      >
+                        Update
+                      </button>
+
+                      <button
+                        onClick={() => setDeleting(l)}
+                        className="rounded-lg border border-red-400 px-3 py-1 text-xs text-red-500 transition hover:bg-red-500 hover:text-white"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -664,6 +699,7 @@ export default function Page() {
               setForm((prev) => ({ ...prev, contact: v }))
             }
           />
+
           <Input
             label="Website URL"
             value={form.websiteUrl}
@@ -688,7 +724,6 @@ export default function Page() {
             }
           />
 
-          {/* IMAGE */}
           <div className="mt-5">
             <label className="text-black text-sm font-semibold">Image</label>
 
@@ -791,63 +826,6 @@ export default function Page() {
 }
 
 /* UI */
-
-function ListingRow({
-  title,
-  category,
-  subCategory,
-  location,
-  image,
-  onEdit,
-  onDelete,
-}: {
-  title: string;
-  category: string;
-  subCategory: string;
-  location: string;
-  image?: string;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <div className="flex items-center justify-between rounded-2xl bg-[#e8dcc7] px-5 py-4 ring-1 ring-black/10 transition hover:shadow-md">
-      <div className="flex min-w-0 items-center gap-4">
-        <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-xl bg-black/5">
-          {image ? (
-            <img src={image} className="h-full w-full object-cover" />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-[10px] text-black/35">
-              No Img
-            </div>
-          )}
-        </div>
-
-        <div className="min-w-0">
-          <h3 className="truncate text-lg font-semibold text-black">{title}</h3>
-          <p className="mt-1 text-sm text-black/70">
-            {category} • {subCategory}
-          </p>
-          <p className="mt-1 truncate text-xs text-black/50">{location}</p>
-        </div>
-      </div>
-
-      <div className="ml-4 flex gap-2">
-        <button
-          onClick={onEdit}
-          className="rounded-xl bg-[#ff7a59] px-4 py-2 text-white"
-        >
-          Update
-        </button>
-        <button
-          onClick={onDelete}
-          className="rounded-xl border border-red-400 px-4 py-2 text-red-500 transition hover:bg-red-500 hover:text-white"
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  );
-}
 
 function Modal({
   children,

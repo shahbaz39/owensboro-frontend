@@ -16,6 +16,7 @@ type SubCategory = {
   name: string;
   category: string;
   categoryId: string;
+  order?: number;
 };
 
 type Category = {
@@ -30,22 +31,18 @@ export default function Page() {
 
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<SubCategory | null>(null);
+  const [dragged, setDragged] = useState<SubCategory | null>(null);
 
   const [form, setForm] = useState({
     name: "",
     categoryId: "",
   });
 
-  // ✅ PAGINATION
+  // PAGINATION
   const [page, setPage] = useState(1);
   const perPage = 12;
 
-  const paginatedData = subCategories.slice(
-    (page - 1) * perPage,
-    page * perPage,
-  );
-
-  // 🔥 FETCH
+  // FETCH
   useEffect(() => {
     const fetchData = async () => {
       const catSnap = await getDocs(collection(db, "Catagories"));
@@ -58,61 +55,72 @@ export default function Page() {
 
       const subs = subSnap.docs.map((d) => {
         const data = d.data();
-
-        const refId = data.catagoriesRef?.id; // ✅ correct field
+        const refId = data.catagoriesRef?.id;
         const cat = cats.find((c) => c.id === refId);
 
         return {
           id: d.id,
-          name: data.name || "Untitled", // ✅ correct field
-          category: cat?.name || "", // ✅ removed "Unknown"
+          name: data.name || "Untitled",
+          category: cat?.name || "",
           categoryId: refId,
+          order: data.order ?? 999,
         };
       });
 
       setCategories(cats);
-      setSubCategories(subs);
+
+      // SORT BY ORDER
+      setSubCategories(
+        subs.sort((a, b) => (a.order ?? 999) - (b.order ?? 999)),
+      );
+
       setLoading(false);
     };
 
     fetchData();
   }, []);
 
-  // 🔥 ADD
+  // ADD
   const handleAdd = async () => {
     const ref = doc(db, "Catagories", form.categoryId);
 
+    const nextOrder =
+      subCategories.length > 0
+        ? Math.max(...subCategories.map((c) => c.order || 0)) + 1
+        : 1;
+
     const docRef = await addDoc(collection(db, "SubCatagories"), {
-      name: form.name, // ✅ FIXED
-      catagoriesRef: ref, // ✅ FIXED
+      name: form.name,
+      catagoriesRef: ref,
       createdAt: new Date(),
+      order: nextOrder,
     });
 
     const cat = categories.find((c) => c.id === form.categoryId);
 
-    setSubCategories((prev) => [
-      ...prev,
-      {
+    setSubCategories((prev) =>
+      [...prev, {
         id: docRef.id,
         name: form.name,
         category: cat?.name || "",
         categoryId: form.categoryId,
-      },
-    ]);
+        order: nextOrder,
+      }].sort((a, b) => (a.order ?? 999) - (b.order ?? 999)),
+    );
 
     setAdding(false);
     setForm({ name: "", categoryId: "" });
   };
 
-  // 🔥 UPDATE
+  // UPDATE
   const handleUpdate = async () => {
     if (!editing) return;
 
     const ref = doc(db, "Catagories", form.categoryId);
 
     await updateDoc(doc(db, "SubCatagories", editing.id), {
-      name: form.name, // ✅ FIXED
-      catagoriesRef: ref, // ✅ FIXED
+      name: form.name,
+      catagoriesRef: ref,
     });
 
     const cat = categories.find((c) => c.id === form.categoryId);
@@ -133,7 +141,7 @@ export default function Page() {
     setEditing(null);
   };
 
-  // 🔥 DELETE
+  // DELETE
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this sub category?")) return;
 
@@ -141,9 +149,15 @@ export default function Page() {
     setSubCategories((prev) => prev.filter((i) => i.id !== id));
   };
 
+  // PAGINATION DATA
+  const paginatedData = subCategories.slice(
+    (page - 1) * perPage,
+    page * perPage,
+  );
+
   return (
     <div className="px-4 pt-6 pb-10 md:px-8">
-      <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+      <div className="flex flex-col gap-5 md:flex-row md:justify-between">
         <div>
           <h1 className="text-4xl font-bold text-[#ff7a59] md:text-5xl">
             Sub Categories
@@ -162,64 +176,89 @@ export default function Page() {
       </div>
 
       <section className="mt-8 rounded-[28px] border border-[#ff7a59]/70 bg-[#0a0a0a] p-5 md:p-6">
-        <div className="mb-5">
-          <h2 className="text-2xl font-bold text-[#ff7a59] md:text-4xl">
-            Sub Category Directory
-          </h2>
-        </div>
-
         {loading ? (
           <p className="text-[#f3ead7]">Loading...</p>
         ) : (
-          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-            {paginatedData.map((item) => (
-              <div
-                key={item.id}
-                className="group flex flex-col justify-between rounded-2xl bg-[#ece2cb] p-4 text-black shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/10"
-              >
-                {/* TOP */}
-                <div>
-                  <h3 className="text-base font-semibold md:text-lg truncate group-hover:text-[#ff7a59] transition">
-                    {item.name}
-                  </h3>
+          <div className="overflow-x-auto rounded-2xl border border-white/10">
+            <table className="w-full text-left">
+              <thead className="bg-[#ece2cb] text-black">
+                <tr>
+                  <th className="p-3">Name</th>
+                  <th className="p-3">Category</th>
+                  <th className="p-3">Order</th>
+                  <th className="p-3 text-right">Actions</th>
+                </tr>
+              </thead>
 
-                  <p className="mt-1 text-xs text-black/50 md:text-sm truncate">
-                    {item.category}
-                  </p>
-                </div>
+              <tbody>
+                {paginatedData.map((item) => (
+                  <tr
+                    key={item.id}
+                    draggable
+                    onDragStart={() => setDragged(item)}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={async () => {
+                      if (!dragged || dragged.id === item.id) return;
 
-                {/* ACTIONS */}
-                <div className="mt-4 flex gap-2">
-                  <button
-                    onClick={() => {
-                      setEditing(item);
-                      setForm({
-                        name: item.name,
-                        categoryId: item.categoryId,
-                      });
+                      const updated = [...subCategories];
+                      const from = updated.findIndex((i) => i.id === dragged.id);
+                      const to = updated.findIndex((i) => i.id === item.id);
+
+                      const [moved] = updated.splice(from, 1);
+                      updated.splice(to, 0, moved);
+
+                      const reordered = updated.map((it, index) => ({
+                        ...it,
+                        order: index + 1,
+                      }));
+
+                      setSubCategories(reordered);
+
+                      await Promise.all(
+                        reordered.map((it) =>
+                          updateDoc(doc(db, "SubCatagories", it.id), {
+                            order: it.order,
+                          })
+                        )
+                      );
                     }}
-                    className="w-full inline-flex items-center justify-center rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:shadow-md md:text-sm"
+                    className="border-b border-white/10 bg-[#ece2cb] text-black hover:bg-[#f5ecd7]"
                   >
-                    Update
-                  </button>
+                    <td className="p-3 font-semibold">{item.name}</td>
+                    <td className="p-3 text-black/60">{item.category}</td>
+                    <td className="p-3">{item.order}</td>
 
-                  <button
-                    onClick={() => handleDelete(item.id)}
-                    className="w-full inline-flex items-center justify-center rounded-lg border border-red-400/40 px-3 py-2 text-xs font-semibold text-red-500 transition-all duration-200 hover:scale-[1.03] hover:bg-red-500 hover:text-white hover:shadow-md md:text-sm"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))}
+                    <td className="p-3">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          onClick={() => {
+                            setEditing(item);
+                            setForm({
+                              name: item.name,
+                              categoryId: item.categoryId,
+                            });
+                          }}
+                          className="rounded-lg bg-[#ff7a59] px-3 py-1 text-xs text-white"
+                        >
+                          Update
+                        </button>
+
+                        <button
+                          onClick={() => handleDelete(item.id)}
+                          className="rounded-lg border border-red-400 px-3 py-1 text-xs text-red-500 hover:bg-red-500 hover:text-white"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
 
-        <Pagination
-          total={subCategories.length}
-          page={page}
-          setPage={setPage}
-        />
+        <Pagination total={subCategories.length} page={page} setPage={setPage} />
       </section>
 
       {/* MODAL */}
@@ -241,7 +280,9 @@ export default function Page() {
             <label className="text-black font-semibold">Category</label>
             <select
               value={form.categoryId}
-              onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
+              onChange={(e) =>
+                setForm({ ...form, categoryId: e.target.value })
+              }
               className="mt-1 w-full rounded-xl border border-[#ff7a59] bg-white px-4 py-3 text-black"
             >
               <option value="">Select Category</option>
@@ -265,33 +306,7 @@ export default function Page() {
   );
 }
 
-/* UI COMPONENTS */
-
-function SubCategoryRow({ name, category, onDelete, onEdit }: any) {
-  return (
-    <div className="flex justify-between rounded-xl bg-[#ece2cb] px-4 py-3 text-black">
-      <div>
-        <h3 className="font-semibold">{name}</h3>
-        <span className="text-sm">{category}</span>
-      </div>
-
-      <div className="flex gap-2">
-        <button
-          onClick={onEdit}
-          className="bg-[#ff7a59] text-white px-3 py-2 rounded-lg"
-        >
-          Update
-        </button>
-        <button
-          onClick={onDelete}
-          className="border border-red-400 text-red-500 px-3 py-2 rounded-lg"
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  );
-}
+/* COMPONENTS (UNCHANGED) */
 
 function Modal({ children, title, onClose }: any) {
   return (

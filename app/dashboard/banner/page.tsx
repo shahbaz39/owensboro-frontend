@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   collection,
   getDocs,
@@ -42,7 +42,6 @@ export default function Page() {
   const [deleting, setDeleting] = useState<Banner | null>(null);
 
   const [loading, setLoading] = useState(false);
-
   const [file, setFile] = useState<File | null>(null);
 
   const [form, setForm] = useState({
@@ -51,6 +50,18 @@ export default function Page() {
     productId: "",
   });
 
+  /* PAGINATION */
+  const [page, setPage] = useState(1);
+  const perPage = 8;
+
+  const totalPages = Math.max(1, Math.ceil(banners.length / perPage));
+
+  const paginated = useMemo(() => {
+    const start = (page - 1) * perPage;
+    return banners.slice(start, start + perPage);
+  }, [banners, page]);
+
+  /* FETCH */
   useEffect(() => {
     const fetchData = async () => {
       const bannerSnap = await getDocs(collection(db, "Banner"));
@@ -158,9 +169,7 @@ export default function Page() {
 
     setBanners((prev) =>
       prev.map((b) =>
-        b.id === editing.id
-          ? { ...b, ...form, image: imageUrl }
-          : b
+        b.id === editing.id ? { ...b, ...form, image: imageUrl } : b
       )
     );
 
@@ -171,14 +180,10 @@ export default function Page() {
   const confirmDelete = async () => {
     if (!deleting) return;
 
-    setLoading(true);
-
     await deleteDoc(doc(db, "Banner", deleting.id));
     await deleteImage(deleting.image);
 
     setBanners((prev) => prev.filter((b) => b.id !== deleting.id));
-
-    setLoading(false);
     setDeleting(null);
   };
 
@@ -204,136 +209,151 @@ export default function Page() {
         </button>
       </div>
 
-      {/* LIST */}
-  <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-  {banners.map((b) => (
-    <div
-      key={b.id}
-      className="group flex flex-col justify-between rounded-2xl bg-[#ece2cb] p-3 text-black shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/10"
-    >
-      {/* TOP */}
-      <div>
-        {b.image && (
-          <div className="overflow-hidden rounded-xl">
-            <img
-              src={b.image}
-              className="mb-3 h-32 w-full object-cover border border-black/10 transition duration-300 group-hover:scale-105"
-            />
+      {/* ✅ TABLE */}
+      <div className="overflow-x-auto rounded-2xl border border-white/10">
+        <table className="w-full text-left">
+          <thead className="bg-[#ece2cb] text-black">
+            <tr>
+              <th className="p-3">Image</th>
+              <th className="p-3">Title</th>
+              <th className="p-3">Category</th>
+              <th className="p-3">Product</th>
+              <th className="p-3 text-right">Actions</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {paginated.map((b) => (
+              <tr
+                key={b.id}
+                className="border-b bg-[#ece2cb] text-black hover:bg-[#f5ecd7]"
+              >
+                <td className="p-3">
+                  <img
+                    src={b.image}
+                    className="h-14 w-20 rounded-lg object-cover"
+                  />
+                </td>
+
+                <td className="p-3 font-semibold">{b.title}</td>
+                <td className="p-3">{b.category}</td>
+                <td className="p-3">{b.product}</td>
+
+                <td className="p-3">
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => {
+                        setEditing(b);
+                        setForm({
+                          title: b.title,
+                          categoryId: b.categoryId,
+                          productId: b.productId,
+                        });
+                      }}
+                      className="rounded-lg bg-[#ff7a59] px-3 py-1 text-white"
+                    >
+                      Update
+                    </button>
+
+                    <button
+                      onClick={() => setDeleting(b)}
+                      className="rounded-lg border border-red-400 px-3 py-1 text-red-500 hover:bg-red-500 hover:text-white"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ✅ PAGINATION */}
+      {banners.length > perPage && (
+        <div className="mt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-[#f3ead7]">
+
+          <p className="text-sm text-[#f3ead7]/70">
+            Showing {(page - 1) * perPage + 1}–
+            {Math.min(page * perPage, banners.length)} of {banners.length}
+          </p>
+
+          <div className="flex gap-2">
+            <button
+              disabled={page === 1}
+              onClick={() => setPage(page - 1)}
+              className="px-3 py-1 border border-white/10 rounded-lg disabled:opacity-30"
+            >
+              Prev
+            </button>
+
+            {Array.from({ length: totalPages }).map((_, i) => {
+              const p = i + 1;
+
+              if (
+                p !== 1 &&
+                p !== totalPages &&
+                Math.abs(p - page) > 1
+              ) return null;
+
+              return (
+                <button
+                  key={p}
+                  onClick={() => setPage(p)}
+                  className={`px-3 py-1 rounded-lg ${
+                    page === p
+                      ? "bg-[#ff7a59] text-white"
+                      : "border border-white/10"
+                  }`}
+                >
+                  {p}
+                </button>
+              );
+            })}
+
+            <button
+              disabled={page === totalPages}
+              onClick={() => setPage(page + 1)}
+              className="px-3 py-1 border border-white/10 rounded-lg disabled:opacity-30"
+            >
+              Next
+            </button>
           </div>
-        )}
+        </div>
+      )}
 
-        <h3 className="text-base font-semibold md:text-lg truncate group-hover:text-[#ff7a59] transition">
-          {b.title}
-        </h3>
-
-        <p className="mt-1 text-xs text-black/50 md:text-sm truncate">
-          {b.category} • {b.product}
-        </p>
-      </div>
-
-      {/* ACTIONS */}
-      <div className="mt-4 flex gap-2">
-        <button
-          onClick={() => {
-            setEditing(b);
-            setForm({
-              title: b.title,
-              categoryId: b.categoryId,
-              productId: b.productId,
-            });
-          }}
-          className="w-full inline-flex items-center justify-center rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:shadow-md md:text-sm"
-        >
-          Update
-        </button>
-
-        <button
-          onClick={() => setDeleting(b)}
-          className="w-full inline-flex items-center justify-center rounded-lg border border-red-400/40 px-3 py-2 text-xs font-semibold text-red-500 transition-all duration-200 hover:scale-[1.03] hover:bg-red-500 hover:text-white hover:shadow-md md:text-sm"
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  ))}
-</div>
-
-      {/* ADD / EDIT MODAL */}
+      {/* MODALS (UNCHANGED) */}
       {(adding || editing) && (
-        <Modal title="Add Banner" onClose={closeModal}>
-
+        <Modal title="Banner" onClose={closeModal}>
           <Input label="Title" value={form.title} onChange={(v:any)=>setForm({...form,title:v})} />
-
           <Select value={form.categoryId} onChange={(v:any)=>setForm({...form,categoryId:v})} options={categories} placeholder="Select category"/>
-
           <Select value={form.productId} onChange={(v:any)=>setForm({...form,productId:v})} options={products} placeholder="Select product"/>
-
           <input type="file" onChange={(e)=>setFile(e.target.files?.[0]||null)} className="mt-4"/>
 
-          <button
-            onClick={adding ? handleAdd : handleUpdate}
-            disabled={loading}
-            className="mt-6 w-full bg-[#ff7a59] text-white py-3 rounded-xl flex justify-center items-center"
-          >
-            {loading ? <Spinner /> : adding ? "Create Banner" : "Update Banner"}
+          <button onClick={adding ? handleAdd : handleUpdate}
+            className="mt-6 w-full bg-[#ff7a59] text-white py-3 rounded-xl">
+            {loading ? "Saving..." : "Save"}
           </button>
         </Modal>
       )}
 
-      {/* DELETE MODAL */}
       {deleting && (
-        <Modal title="Delete Banner" onClose={() => setDeleting(null)}>
-          <p className="text-black">
-            Are you sure you want to delete <b>{deleting.title}</b>?
-          </p>
+        <Modal title="Delete" onClose={() => setDeleting(null)}>
+          <p>Delete <b>{deleting.title}</b>?</p>
 
-          <div className="flex gap-3 mt-6">
-            <button
-              onClick={() => setDeleting(null)}
-              className="w-full border py-2 rounded-lg"
-            >
-              Cancel
-            </button>
-
-            <button
-              onClick={confirmDelete}
-              disabled={loading}
-              className="w-full bg-red-500 text-white py-2 rounded-lg flex justify-center items-center"
-            >
-              {loading ? <Spinner /> : "Delete"}
-            </button>
-          </div>
+          <button
+            onClick={confirmDelete}
+            className="mt-4 w-full bg-red-500 text-white py-2 rounded-xl"
+          >
+            Delete
+          </button>
         </Modal>
       )}
     </div>
   );
 }
 
-/* ROW */
-function BannerRow({ title, category, product, image, onEdit, onDelete }: any) {
-  return (
-    <div className="flex justify-between bg-[#ece2cb] p-4 rounded-xl">
-      <div className="flex gap-4 items-center">
-        <img src={image} className="h-16 w-24 rounded-lg object-cover"/>
-        <div>
-          <h3 className="font-semibold text-black">{title}</h3>
-          <p className="text-sm text-black/70">{category} • {product}</p>
-        </div>
-      </div>
-
-      <div className="flex gap-2">
-        <button onClick={onEdit} className="bg-[#ff7a59] text-white px-3 py-1 rounded">
-          Update
-        </button>
-        <button onClick={onDelete} className="border border-red-400 text-red-500 px-3 py-1 rounded">
-          Delete
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* UI */
+/* UI unchanged */
 function Modal({ children, title, onClose }: any) {
   return (
     <div className="fixed inset-0 bg-black/70 flex justify-center items-center">
@@ -365,12 +385,5 @@ function Select({ value, onChange, options, placeholder }: any) {
       <option value="">{placeholder}</option>
       {options.map((o:any)=><option key={o.id} value={o.id}>{o.name}</option>)}
     </select>
-  );
-}
-
-/* SPINNER */
-function Spinner() {
-  return (
-    <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
   );
 }

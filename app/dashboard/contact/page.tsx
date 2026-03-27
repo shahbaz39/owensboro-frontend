@@ -18,7 +18,7 @@ export default function Page() {
   const [selected, setSelected] = useState<Request | null>(null);
 
   const [page, setPage] = useState(1);
-  const perPage = 6;
+  const perPage = 8;
 
   /* FETCH */
   useEffect(() => {
@@ -121,38 +121,115 @@ export default function Page() {
           </p>
         </div>
 
-        {/* GRID */}
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {paginated.map((r) => (
-            <RequestCard
-              key={r.id}
-              {...r}
-              onView={() => setSelected(r)}
-            />
-          ))}
+        {/* TABLE */}
+        <div className="overflow-x-auto rounded-2xl border border-white/10">
+          <table className="w-full text-left">
+            <thead className="bg-[#ece2cb] text-black">
+              <tr>
+                <th className="p-3">Name</th>
+                <th className="p-3">Email</th>
+                <th className="p-3">Message</th>
+                <th className="p-3">Date</th>
+                <th className="p-3 text-right">Action</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {paginated.map((r) => (
+                <tr
+                  key={r.id}
+                  className="border-b border-white/10 bg-[#ece2cb] text-black hover:bg-[#f5ecd7]"
+                >
+                  <td className="p-3 font-semibold">{r.name}</td>
+
+                  <td className="p-3 text-[#ff7a59] truncate">
+                    {r.email}
+                  </td>
+
+                  <td className="p-3 text-black/70 max-w-[300px] truncate">
+                    {r.message}
+                  </td>
+
+                  <td className="p-3 text-black/60">
+                    {r.timestamp?.toDate
+                      ? r.timestamp.toDate().toLocaleDateString()
+                      : "-"}
+                  </td>
+
+                  <td className="p-3">
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => setSelected(r)}
+                        className="rounded-lg bg-[#ff7a59] px-3 py-1 text-xs text-white"
+                      >
+                        View
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
 
         {/* PAGINATION */}
         {totalPages > 1 && (
-          <div className="mt-8 flex justify-between items-center text-[#f3ead7]">
-            <button
-              disabled={page === 1}
-              onClick={() => setPage(page - 1)}
-              className="opacity-70 hover:opacity-100 disabled:opacity-30"
-            >
-              Prev
-            </button>
+         <div className="mt-8 flex flex-col md:flex-row items-center justify-between gap-4 text-[#f3ead7]">
 
-            <span>{page} / {totalPages}</span>
+  {/* INFO */}
+  <p className="text-sm text-[#f3ead7]/70">
+    Showing {(page - 1) * perPage + 1}–{Math.min(page * perPage, requests.length)} of {requests.length}
+  </p>
 
-            <button
-              disabled={page === totalPages}
-              onClick={() => setPage(page + 1)}
-              className="opacity-70 hover:opacity-100 disabled:opacity-30"
-            >
-              Next
-            </button>
-          </div>
+  {/* CONTROLS */}
+  <div className="flex items-center gap-2">
+
+    {/* PREV */}
+    <button
+      disabled={page === 1}
+      onClick={() => setPage(page - 1)}
+      className="px-3 py-1 rounded-lg border border-white/10 disabled:opacity-30 hover:bg-white/10 transition"
+    >
+      Prev
+    </button>
+
+    {/* PAGE NUMBERS */}
+    {Array.from({ length: totalPages }).map((_, i) => {
+      const p = i + 1;
+
+      // limit visible pages (nice UX)
+      if (
+        p !== 1 &&
+        p !== totalPages &&
+        Math.abs(p - page) > 1
+      ) return null;
+
+      return (
+        <button
+          key={p}
+          onClick={() => setPage(p)}
+          className={`px-3 py-1 rounded-lg text-sm transition
+            ${page === p
+              ? "bg-[#ff7a59] text-white"
+              : "border border-white/10 hover:bg-white/10"
+            }`}
+        >
+          {p}
+        </button>
+      );
+    })}
+
+    {/* NEXT */}
+    <button
+      disabled={page === totalPages}
+      onClick={() => setPage(page + 1)}
+      className="px-3 py-1 rounded-lg border border-white/10 disabled:opacity-30 hover:bg-white/10 transition"
+    >
+      Next
+    </button>
+
+  </div>
+</div>
         )}
       </section>
 
@@ -163,6 +240,7 @@ export default function Page() {
 
             <p><b>Name:</b> {selected.name}</p>
             <p><b>Email:</b> {selected.email}</p>
+
             <p><b>Message:</b></p>
 
             <div className="p-3 bg-white rounded-lg border">
@@ -176,48 +254,30 @@ export default function Page() {
   );
 }
 
-/* CARD */
-function RequestCard({
-  name,
-  email,
-  message,
-  onView,
-}: any) {
-  return (
-    <div className="rounded-xl bg-[#ece2cb] p-5 text-black transition hover:-translate-y-1 hover:shadow-lg">
-
-      <h3 className="font-semibold text-lg">{name}</h3>
-
-      <p className="text-sm text-[#ff7a59] mt-1 truncate">
-        {email}
-      </p>
-
-      <p className="text-sm mt-3 line-clamp-3 text-black/70">
-        {message}
-      </p>
-
-      <button
-        onClick={onView}
-        className="mt-4 w-full rounded-lg bg-[#ff7a59] py-2 text-white font-semibold"
-      >
-        View
-      </button>
-    </div>
-  );
-}
-
 /* MODAL */
 function Modal({ children, title, onClose }: any) {
   return (
-    <div className="fixed inset-0 bg-black/70 flex justify-center items-center">
-      <div className="bg-[#e8dcc7] p-6 rounded-3xl w-[90%] max-w-lg">
-
-        <div className="flex justify-between mb-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
+      
+      <div className="w-full max-w-2xl max-h-[90vh] rounded-3xl bg-[#e8dcc7] shadow-2xl flex flex-col overflow-hidden">
+        
+        {/* HEADER (STICKY) */}
+        <div className="flex items-center justify-between p-5 border-b border-black/10 bg-[#e8dcc7] sticky top-0 z-10">
           <h2 className="text-xl font-bold text-[#ff7a59]">{title}</h2>
-          <button onClick={onClose}>✖</button>
+
+          <button
+            onClick={onClose}
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-black/10 text-black hover:bg-black/20 transition"
+          >
+            ✕
+          </button>
         </div>
 
-        {children}
+        {/* CONTENT (SCROLLABLE) */}
+        <div className="p-5 overflow-y-auto text-black">
+          {children}
+        </div>
+
       </div>
     </div>
   );

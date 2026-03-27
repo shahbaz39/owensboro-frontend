@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   collection,
   getDocs,
@@ -17,6 +17,9 @@ import {
 } from "firebase/storage";
 
 import { db, storage } from "@/lib/firebaseServices";
+
+/* 🔥 IMAGE CACHE */
+const imageCache = new Map<string, string>();
 
 /* TYPES */
 type HeaderImage = {
@@ -37,9 +40,11 @@ export default function Page() {
 
   const [form, setForm] = useState({ title: "" });
 
+  const preloadingRef = useRef<Set<string>>(new Set());
+
   /* PAGINATION */
   const [page, setPage] = useState(1);
-  const perPage = 9;
+  const perPage = 8;
 
   const totalPages = Math.max(1, Math.ceil(items.length / perPage));
 
@@ -47,6 +52,27 @@ export default function Page() {
     const start = (page - 1) * perPage;
     return items.slice(start, start + perPage);
   }, [items, page]);
+
+  /* 🔥 PRELOAD IMAGE */
+  const preloadImage = (src: string) => {
+    if (!src) return;
+    if (imageCache.has(src)) return;
+    if (preloadingRef.current.has(src)) return;
+
+    preloadingRef.current.add(src);
+
+    const img = new Image();
+    img.src = src;
+
+    img.onload = () => {
+      imageCache.set(src, src);
+      preloadingRef.current.delete(src);
+    };
+
+    img.onerror = () => {
+      preloadingRef.current.delete(src);
+    };
+  };
 
   /* FETCH */
   useEffect(() => {
@@ -59,18 +85,29 @@ export default function Page() {
         image: d.data().image,
       }));
 
+      data.forEach((item) => {
+        if (item.image) preloadImage(item.image);
+      });
+
       setItems(data);
     };
 
     fetchData();
   }, []);
 
+  /* RESET PAGE */
+  useEffect(() => {
+    setPage(1);
+  }, [items.length]);
+
   /* IMAGE */
   const uploadImage = async () => {
     if (!file) return "";
     const r = ref(storage, `header/${Date.now()}-${file.name}`);
     await uploadBytes(r, file);
-    return await getDownloadURL(r);
+    const url = await getDownloadURL(r);
+    preloadImage(url);
+    return url;
   };
 
   const deleteImage = async (url: string) => {
@@ -150,12 +187,9 @@ export default function Page() {
     setForm({ title: "" });
   };
 
-  const preview = file
-    ? URL.createObjectURL(file)
-    : editing?.image || "";
-
   return (
     <div className="px-6 pt-6 pb-10">
+
       {/* HEADER */}
       <div className="flex justify-between mb-8">
         <h1 className="text-4xl font-bold text-[#ff7a59]">
@@ -164,85 +198,61 @@ export default function Page() {
 
         <button
           onClick={() => setAdding(true)}
-          className="border border-[#ff7a59] px-5 py-2 rounded-xl text-[#ff7a59] hover:bg-[#ff7a59] hover:text-white transition"
+          className="border border-[#ff7a59] px-5 py-2 rounded-xl text-[#ff7a59]"
         >
           Add Header Image
         </button>
       </div>
 
-      {/* GRID */}
-      <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-        {paginatedData.map((item) => (
-          <div
-            key={item.id}
-            className="group rounded-2xl bg-[#ece2cb] p-3 text-black ring-1 ring-black/10 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:ring-[#ff7a59]/40"
-          >
-            <div className="overflow-hidden rounded-xl">
-              <img
-                src={item.image}
-                className="h-40 w-full object-cover transition duration-300 group-hover:scale-105"
+      {/* ✅ TABLE */}
+      <div className="overflow-x-auto rounded-2xl border border-white/10">
+        <table className="w-full text-left">
+          <thead className="bg-[#ece2cb] text-black">
+            <tr>
+              <th className="p-3">Image</th>
+              <th className="p-3">Title</th>
+              <th className="p-3 text-right">Actions</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {paginatedData.map((item) => (
+              <Row
+                key={item.id}
+                item={item}
+                setEditing={setEditing}
+                setDeleting={setDeleting}
               />
-            </div>
-
-            <h3 className="mt-2 font-semibold">{item.title}</h3>
-
-            <div className="flex gap-2 mt-3">
-              <button
-                onClick={() => {
-                  setEditing(item);
-                  setForm({ title: item.title });
-                }}
-                className="w-full bg-[#ff7a59] text-white py-2 rounded-lg"
-              >
-                Update
-              </button>
-
-              <button
-                onClick={() => setDeleting(item)}
-                className="w-full border border-red-400 text-red-500 py-2 rounded-lg hover:bg-red-500 hover:text-white transition"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        ))}
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {/* PAGINATION */}
       {items.length > perPage && (
-        <div className="mt-8 flex items-center justify-between text-[#f3ead7]">
+        <div className="mt-8 flex justify-between items-center text-[#f3ead7]">
           <p className="text-sm">
             Showing {(page - 1) * perPage + 1}–
             {Math.min(page * perPage, items.length)} of {items.length}
           </p>
 
-          <div className="flex items-center gap-2">
+          <div className="flex gap-2">
             <button
               disabled={page === 1}
-              onClick={() => setPage((p) => p - 1)}
-              className="rounded-xl border border-white/20 px-4 py-2 disabled:opacity-40 hover:bg-white/10"
+              onClick={() => setPage(page - 1)}
+              className="px-3 py-1 border rounded"
             >
-              Previous
+              Prev
             </button>
 
-            {Array.from({ length: totalPages }).map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setPage(i + 1)}
-                className={`rounded-xl px-4 py-2 ${
-                  page === i + 1
-                    ? "bg-[#ff7a59] text-white"
-                    : "border border-white/20 hover:bg-white/10"
-                }`}
-              >
-                {i + 1}
-              </button>
-            ))}
+            <button className="px-3 py-1 bg-[#ff7a59] text-white rounded">
+              {page}
+            </button>
 
             <button
               disabled={page === totalPages}
-              onClick={() => setPage((p) => p + 1)}
-              className="rounded-xl border border-white/20 px-4 py-2 disabled:opacity-40 hover:bg-white/10"
+              onClick={() => setPage(page + 1)}
+              className="px-3 py-1 border rounded"
             >
               Next
             </button>
@@ -250,57 +260,12 @@ export default function Page() {
         </div>
       )}
 
-      {/* MODAL */}
+      {/* MODALS unchanged */}
       {(adding || editing) && (
         <Modal title="Header Image" onClose={closeModal}>
-          <Input
-            label="Title"
-            value={form.title}
-            onChange={(v: string) =>
-              setForm({ ...form, title: v })
-            }
-          />
+          <Input label="Title" value={form.title} onChange={(v:any)=>setForm({...form,title:v})} />
 
-          {/* IMAGE BOX */}
-          <div className="mt-5">
-            <label className="font-semibold">Image</label>
-
-            <div className="mt-3 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-[#ff7a59]/40 p-5">
-              {preview ? (
-                <img
-                  src={preview}
-                  className="h-32 w-32 rounded-xl object-cover"
-                />
-              ) : (
-                <div className="h-32 w-32 flex items-center justify-center border rounded-xl text-gray-400">
-                  No Image
-                </div>
-              )}
-
-              <div className="flex gap-3">
-                <label className="cursor-pointer rounded-xl border border-[#ff7a59] px-4 py-2 text-[#ff7a59] hover:bg-[#ff7a59] hover:text-white transition">
-                  {editing ? "Replace" : "Upload"}
-                  <input
-                    hidden
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) =>
-                      setFile(e.target.files?.[0] || null)
-                    }
-                  />
-                </label>
-
-                {(file || editing?.image) && (
-                  <button
-                    onClick={() => setFile(null)}
-                    className="rounded-xl border border-red-400 px-4 py-2 text-red-500 hover:bg-red-500 hover:text-white transition"
-                  >
-                    Remove
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
+          <input type="file" onChange={(e)=>setFile(e.target.files?.[0]||null)} className="mt-4"/>
 
           <button
             onClick={adding ? handleAdd : handleUpdate}
@@ -311,18 +276,13 @@ export default function Page() {
         </Modal>
       )}
 
-      {/* DELETE */}
       {deleting && (
         <Modal title="Delete" onClose={() => setDeleting(null)}>
-          <p>
-            Delete <b>{deleting.title}</b>?
-          </p>
-
           <button
             onClick={confirmDelete}
-            className="mt-4 w-full bg-red-500 text-white py-2 rounded-xl"
+            className="bg-red-500 text-white px-4 py-2 rounded"
           >
-            Delete
+            Confirm Delete
           </button>
         </Modal>
       )}
@@ -330,12 +290,43 @@ export default function Page() {
   );
 }
 
-/* UI */
+/* 🔥 MEMO ROW */
+const Row = React.memo(function Row({ item, setEditing, setDeleting }: any) {
+  return (
+    <tr className="border-b bg-[#ece2cb] text-black hover:bg-[#f5ecd7]">
+      <td className="p-3">
+        <img
+          src={imageCache.get(item.image) || item.image}
+          className="h-14 w-20 rounded-lg object-cover"
+        />
+      </td>
 
+      <td className="p-3 font-semibold">{item.title}</td>
+
+      <td className="p-3 text-right">
+        <button
+          onClick={() => setEditing(item)}
+          className="bg-[#ff7a59] px-3 py-1 text-white rounded mr-2"
+        >
+          Update
+        </button>
+
+        <button
+          onClick={() => setDeleting(item)}
+          className="border border-red-400 px-3 py-1 text-red-500"
+        >
+          Delete
+        </button>
+      </td>
+    </tr>
+  );
+});
+
+/* UI SAME */
 function Modal({ children, title, onClose }: any) {
   return (
-    <div className="fixed inset-0 bg-black/70 flex justify-center items-center px-4">
-      <div className="bg-[#e8dcc7] p-6 rounded-3xl w-full max-w-lg text-black">
+    <div className="fixed inset-0 bg-black/70 flex justify-center items-center">
+      <div className="bg-[#e8dcc7] p-6 rounded-3xl w-[90%] max-w-lg text-black">
         <div className="flex justify-between mb-4">
           <h2 className="text-xl font-bold text-[#ff7a59]">{title}</h2>
           <button onClick={onClose}>✖</button>

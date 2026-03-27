@@ -9,43 +9,75 @@ type User = {
   name: string;
   email: string;
   phone: string;
+  uid: string;
+  createdAt: any;
 };
 
 export default function Page() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<User | null>(null);
 
-  // Pagination state
   const [page, setPage] = useState(1);
   const perPage = 9;
 
-  // Fetch users from Firestore
+  /* FETCH */
   useEffect(() => {
     const fetchUsers = async () => {
-      try {
-        const snap = await getDocs(collection(db, "Users"));
-        const data = snap.docs.map((d) => {
-          const x = d.data();
-          return {
-            id: d.id,
-            name: x.full_name || x.display_name || "No Name",
-            email: x.email || "No Email",
-            phone: x.phone_number || "No Phone",
-          };
-        });
-        setUsers(data);
-      } catch (err) {
-        console.error("Users fetch error:", err);
-      } finally {
-        setLoading(false);
-      }
+      const snap = await getDocs(collection(db, "Users"));
+
+      const data = snap.docs.map((d) => {
+        const x = d.data();
+
+        return {
+          id: d.id,
+          name: x.full_name || x.display_name || "No Name",
+          email: x.email || "",
+          phone: x.phone_number || "",
+          uid: x.uid || "",
+          createdAt: x.created_time || null,
+        };
+      });
+
+      setUsers(data);
+      setLoading(false);
     };
 
     fetchUsers();
   }, []);
 
-  // Pagination calculations
+  /* EXPORT CSV */
+  const exportCSV = () => {
+    const headers = ["Name", "Email", "Phone", "UID", "Created Time"];
+
+    const rows = users.map((u) => [
+      u.name,
+      u.email,
+      u.phone,
+      u.uid,
+      u.createdAt?.toDate
+        ? u.createdAt.toDate().toLocaleString()
+        : "",
+    ]);
+
+    const csv = [headers, ...rows]
+      .map((r) =>
+        r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")
+      )
+      .join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `users_${Date.now()}.csv`;
+    a.click();
+  };
+
+  /* PAGINATION */
   const totalPages = Math.max(1, Math.ceil(users.length / perPage));
+
   const paginated = useMemo(() => {
     const start = (page - 1) * perPage;
     return users.slice(start, start + perPage);
@@ -54,37 +86,82 @@ export default function Page() {
   return (
     <div className="px-6 pt-6 pb-10">
       {/* HEADER */}
-      <header className="mb-8">
-        <h1 className="text-5xl font-bold text-[#ff7a59]">All Users Info</h1>
-        <p className="mt-2 text-lg text-[#e8dcc7]">
-          All users information is listed here.
-        </p>
-      </header>
-
-      {/* USERS CONTAINER */}
-      <section className="rounded-3xl border border-[#ff7a59]/40 bg-[#0a0a0a] p-6">
-        {/* TITLE */}
-        <div className="mb-6">
-          <h2 className="text-3xl font-bold text-[#ff7a59]">
-            Users ({users.length})
-          </h2>
+      <div className="mb-8 flex justify-between items-center">
+        <div>
+          <h1 className="text-5xl font-bold text-[#ff7a59]">
+            All Users Info
+          </h1>
+          <p className="mt-2 text-lg text-[#e8dcc7]">
+            All users information is listed here.
+          </p>
         </div>
 
-        {/* LOADING */}
+        <button
+          onClick={exportCSV}
+          className="rounded-xl border border-[#ff7a59] px-5 py-2 text-[#ff7a59] hover:bg-[#ff7a59] hover:text-white"
+        >
+          Export CSV
+        </button>
+      </div>
+
+      {/* TABLE */}
+      <section className="rounded-3xl border border-[#ff7a59]/40 bg-[#0a0a0a] p-6">
+
+        <h2 className="text-3xl font-bold text-[#ff7a59] mb-6">
+          Users ({users.length})
+        </h2>
+
         {loading ? (
-          <p className="text-[#f3ead7]">Loading users...</p>
+          <p className="text-[#f3ead7]">Loading...</p>
         ) : (
           <>
-            {/* GRID */}
-            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-              {paginated.map((user) => (
-                <UserCard key={user.id} {...user} />
-              ))}
+            <div className="overflow-x-auto rounded-2xl border border-white/10">
+              <table className="w-full text-left">
+                <thead className="bg-[#ece2cb] text-black">
+                  <tr>
+                    <th className="p-3">Name</th>
+                    <th className="p-3">Email</th>
+                    <th className="p-3">Phone</th>
+                    <th className="p-3">UID</th>
+                    <th className="p-3">Created</th>
+                    <th className="p-3 text-right">View</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {paginated.map((u) => (
+                    <tr
+                      key={u.id}
+                      className="border-b bg-[#ece2cb] text-black hover:bg-[#f5ecd7]"
+                    >
+                      <td className="p-3 font-semibold">{u.name}</td>
+                      <td className="p-3 text-[#ff7a59]">{u.email}</td>
+                      <td className="p-3">{u.phone}</td>
+                      <td className="p-3 text-xs">{u.uid}</td>
+                      <td className="p-3 text-black/60">
+                        {u.createdAt?.toDate
+                          ? u.createdAt.toDate().toLocaleDateString()
+                          : "-"}
+                      </td>
+
+                      <td className="p-3 text-right">
+                        <button
+                          onClick={() => setSelected(u)}
+                          className="rounded-lg bg-[#ff7a59] px-3 py-1 text-white text-xs"
+                        >
+                          View
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
 
             {/* PAGINATION */}
-            <div className="mt-8 flex items-center justify-between text-[#f3ead7]">
-              <p>
+            <div className="mt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-[#f3ead7]">
+
+              <p className="text-sm text-[#f3ead7]/70">
                 Showing {(page - 1) * perPage + 1}–
                 {Math.min(page * perPage, users.length)} of {users.length}
               </p>
@@ -92,20 +169,40 @@ export default function Page() {
               <div className="flex gap-2">
                 <button
                   disabled={page === 1}
-                  onClick={() => setPage((p) => p - 1)}
-                  className="rounded-xl border border-white/10 px-4 py-2 disabled:opacity-40"
+                  onClick={() => setPage(page - 1)}
+                  className="px-3 py-1 border border-white/10 rounded-lg disabled:opacity-30"
                 >
-                  Previous
+                  Prev
                 </button>
 
-                <button className="rounded-xl bg-[#ff7a59] px-4 py-2 text-white">
-                  {page}
-                </button>
+                {Array.from({ length: totalPages }).map((_, i) => {
+                  const p = i + 1;
+
+                  if (
+                    p !== 1 &&
+                    p !== totalPages &&
+                    Math.abs(p - page) > 1
+                  ) return null;
+
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={`px-3 py-1 rounded-lg ${
+                        page === p
+                          ? "bg-[#ff7a59] text-white"
+                          : "border border-white/10"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  );
+                })}
 
                 <button
                   disabled={page === totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                  className="rounded-xl border border-white/10 px-4 py-2 disabled:opacity-40"
+                  onClick={() => setPage(page + 1)}
+                  className="px-3 py-1 border border-white/10 rounded-lg disabled:opacity-30"
                 >
                   Next
                 </button>
@@ -114,41 +211,39 @@ export default function Page() {
           </>
         )}
       </section>
+
+      {/* USER DETAILS MODAL */}
+      {selected && (
+        <Modal title="User Details" onClose={() => setSelected(null)}>
+          <div className="space-y-3 text-black">
+            <p><b>Name:</b> {selected.name}</p>
+            <p><b>Email:</b> {selected.email}</p>
+            <p><b>Phone:</b> {selected.phone}</p>
+            <p><b>UID:</b> {selected.uid}</p>
+            <p>
+              <b>Created:</b>{" "}
+              {selected.createdAt?.toDate
+                ? selected.createdAt.toDate().toLocaleString()
+                : "-"}
+            </p>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
 
-// USER CARD COMPONENT
-function UserCard({ name, email, phone }: { name: string; email: string; phone: string }) {
+/* MODAL */
+function Modal({ children, title, onClose }: any) {
   return (
-    <div className="group relative rounded-2xl bg-[#e8dcc7] p-5 text-black transition-all duration-200 hover:-translate-y-1 hover:shadow-xl">
-      {/* NAME */}
-      <h3 className="text-lg font-semibold">{name}</h3>
-
-      {/* DETAILS */}
-      <div className="mt-3 space-y-1 text-sm">
-        <p className="text-[#ff7a59] break-all">email: {email}</p>
-        <p className="text-[#ff7a59]">phone: {phone}</p>
+    <div className="fixed inset-0 bg-black/70 flex justify-center items-center">
+      <div className="bg-[#e8dcc7] p-6 rounded-3xl w-[90%] max-w-lg">
+        <div className="flex justify-between mb-4">
+          <h2 className="text-xl font-bold text-[#ff7a59]">{title}</h2>
+          <button onClick={onClose}>✕</button>
+        </div>
+        {children}
       </div>
-
-      {/* COPY ACTIONS */}
-      <div className="absolute right-4 top-4 flex flex-col gap-2 opacity-0 transition group-hover:opacity-100">
-        <button
-          onClick={() => navigator.clipboard.writeText(email)}
-          className="rounded-lg bg-black/10 p-2 hover:bg-black/20"
-        >
-          📧
-        </button>
-        <button
-          onClick={() => navigator.clipboard.writeText(phone)}
-          className="rounded-lg bg-black/10 p-2 hover:bg-black/20"
-        >
-          📞
-        </button>
-      </div>
-
-      {/* ACCENT */}
-      <div className="mt-4 h-[2px] w-10 bg-[#ff7a59]/40 rounded-full transition-all group-hover:w-16" />
     </div>
   );
 }

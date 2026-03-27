@@ -1,42 +1,86 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   collection,
   getDocs,
+  addDoc,
+  updateDoc,
   deleteDoc,
   doc,
-  updateDoc,
-  addDoc,
 } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+
+import {
+  ref,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject,
+} from "firebase/storage";
 
 import { db, storage } from "@/lib/firebaseServices";
 
+/* GLOBAL IMAGE CACHE */
+const imageCache = new Map<string, string>();
+
+/* TYPES */
 type Category = {
   id: string;
   name: string;
   slug: string;
-  image?: string;
+  image: string;
+  order?: number;
 };
 
 export default function Page() {
   const [categories, setCategories] = useState<Category[]>([]);
-  const [editing, setEditing] = useState<Category | null>(null);
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Category | null>(null);
   const [deleting, setDeleting] = useState<Category | null>(null);
 
-  const [newCategory, setNewCategory] = useState({
-    name: "",
-    slug: "",
-  });
+  const [dragged, setDragged] = useState<Category | null>(null);
 
+  const [form, setForm] = useState({ name: "", slug: "" });
   const [file, setFile] = useState<File | null>(null);
 
-  // 🔥 FETCH
+  const preloadingRef = useRef<Set<string>>(new Set());
+
+  /* 🔥 PAGINATION */
+  const [page, setPage] = useState(1);
+  const perPage = 8;
+
+  const totalPages = Math.ceil(categories.length / perPage);
+
+  const paginatedData = categories.slice(
+    (page - 1) * perPage,
+    page * perPage
+  );
+
+  /* 🔥 PRELOAD IMAGE */
+  const preloadImage = (src: string) => {
+    if (!src) return;
+    if (imageCache.has(src)) return;
+    if (preloadingRef.current.has(src)) return;
+
+    preloadingRef.current.add(src);
+
+    const img = new Image();
+    img.src = src;
+
+    img.onload = () => {
+      imageCache.set(src, src);
+      preloadingRef.current.delete(src);
+    };
+
+    img.onerror = () => {
+      preloadingRef.current.delete(src);
+    };
+  };
+
+  /* FETCH */
   useEffect(() => {
-    const fetch = async () => {
+    const fetchData = async () => {
       const snap = await getDocs(collection(db, "Catagories"));
+
       const data = snap.docs.map((d) => {
         const x = d.data();
         return {
@@ -44,262 +88,318 @@ export default function Page() {
           name: x.catagoryName,
           slug: x.slug || "",
           image: x.image || "",
+          order: x.order ?? 999,
         };
       });
-      setCategories(data);
+
+      data.forEach((item) => {
+        if (item.image) preloadImage(item.image);
+      });
+
+      setCategories(
+        data.sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
+      );
     };
-    fetch();
+
+    fetchData();
   }, []);
 
-  // 🔥 IMAGE UPLOAD
+  /* RESET PAGE ON DATA CHANGE */
+  useEffect(() => {
+    setPage(1);
+  }, [categories.length]);
+
+  /* IMAGE UPLOAD */
   const uploadImage = async () => {
     if (!file) return "";
 
-    const storageRef = ref(storage, `categories/${Date.now()}-${file.name}`);
-    await uploadBytes(storageRef, file);
-    return await getDownloadURL(storageRef);
+    const r = ref(storage, `categories/${Date.now()}-${file.name}`);
+    await uploadBytes(r, file);
+
+    const url = await getDownloadURL(r);
+    preloadImage(url);
+
+    return url;
   };
 
-  // 🔥 ADD
+  /* ADD */
   const handleAdd = async () => {
     const imageUrl = await uploadImage();
 
     const docRef = await addDoc(collection(db, "Catagories"), {
-      catagoryName: newCategory.name,
-      slug: newCategory.slug,
+      catagoryName: form.name,
+      slug: form.slug,
       image: imageUrl,
-      createdAt: new Date(),
+      order: categories.length + 1,
     });
 
     setCategories((prev) => [
-      ...prev,
       {
         id: docRef.id,
-        name: newCategory.name,
-        slug: newCategory.slug,
+        name: form.name,
+        slug: form.slug,
         image: imageUrl,
+        order: prev.length + 1,
       },
+      ...prev,
     ]);
 
-    setAdding(false);
-    setFile(null);
-    setNewCategory({ name: "", slug: "" });
+    closeModal();
   };
 
-  // 🔥 UPDATE
+  /* UPDATE */
   const handleUpdate = async () => {
     if (!editing) return;
 
+    let imageUrl = editing.image;
+
+    if (file) {
+      await deleteObject(ref(storage, editing.image));
+      imageUrl = await uploadImage();
+    }
+
     await updateDoc(doc(db, "Catagories", editing.id), {
-      catagoryName: editing.name,
-      slug: editing.slug,
+      catagoryName: form.name,
+      slug: form.slug,
+      image: imageUrl,
     });
 
     setCategories((prev) =>
-      prev.map((c) => (c.id === editing.id ? editing : c)),
+      prev.map((c) =>
+        c.id === editing.id
+          ? { ...c, name: form.name, slug: form.slug, image: imageUrl }
+          : c
+      )
     );
 
-    setEditing(null);
+    closeModal();
   };
 
-  // 🔥 DELETE
+  /* DELETE */
   const confirmDelete = async () => {
     if (!deleting) return;
 
     await deleteDoc(doc(db, "Catagories", deleting.id));
-    setCategories((prev) => prev.filter((c) => c.id !== deleting.id));
+    await deleteObject(ref(storage, deleting.image));
+
+    setCategories((prev) =>
+      prev.filter((c) => c.id !== deleting.id)
+    );
+
     setDeleting(null);
   };
 
+  /* DRAG DROP */
+  const handleDrop = async (target: Category) => {
+    if (!dragged || dragged.id === target.id) return;
+
+    const updated = [...categories];
+    const from = updated.findIndex((i) => i.id === dragged.id);
+    const to = updated.findIndex((i) => i.id === target.id);
+
+    const [moved] = updated.splice(from, 1);
+    updated.splice(to, 0, moved);
+
+    const reordered = updated.map((item, index) => ({
+      ...item,
+      order: index + 1,
+    }));
+
+    setCategories(reordered);
+
+    await Promise.all(
+      reordered.map((item) =>
+        updateDoc(doc(db, "Catagories", item.id), {
+          order: item.order,
+        })
+      )
+    );
+  };
+
+  const closeModal = () => {
+    setAdding(false);
+    setEditing(null);
+    setForm({ name: "", slug: "" });
+    setFile(null);
+  };
+
   return (
-    <div className="px-4 pt-6 pb-10 md:px-8 bg-black min-h-screen">
+    <div className="px-6 pt-6 pb-10">
+
       {/* HEADER */}
-      <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between mb-8">
-        <div>
-          <h1 className="text-4xl font-bold tracking-tight text-[#ff7a59] md:text-5xl">
-            Categories
-          </h1>
-          <p className="mt-2 text-lg font-medium text-[#e8dcc7] md:text-xl">
-            Manage your platform categories
-          </p>
-        </div>
+      <div className="flex justify-between mb-8">
+        <h1 className="text-4xl font-bold text-[#ff7a59]">
+          Categories
+        </h1>
 
         <button
           onClick={() => setAdding(true)}
-          className="inline-flex h-11 items-center justify-center rounded-xl border border-[#ff7a59] px-5 text-sm font-semibold text-[#ff7a59] transition hover:bg-[#ff7a59] hover:text-white"
+          className="border border-[#ff7a59] px-5 py-2 rounded-xl text-[#ff7a59]"
         >
           Add Category
         </button>
       </div>
 
-      {/* LIST */}
-<div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-  {categories.map((c) => (
-    <div
-      key={c.id}
-      className="group flex flex-col justify-between rounded-2xl bg-[#ece2cb] p-3 text-black shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/10"
-    >
-      {/* TOP */}
-      <div>
-        {c.image && (
-          <div className="overflow-hidden rounded-xl">
-            <img
-              src={c.image}
-              className="mb-3 h-32 w-full object-cover border border-black/10 transition duration-300 group-hover:scale-105"
-            />
+      {/* TABLE */}
+      <div className="overflow-x-auto rounded-2xl border border-white/10">
+        <table className="w-full text-left">
+          <thead className="bg-[#ece2cb] text-black">
+            <tr>
+              <th className="p-3">Image</th>
+              <th className="p-3">Name</th>
+              <th className="p-3">Slug</th>
+              <th className="p-3">Order</th>
+              <th className="p-3 text-right">Actions</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {paginatedData.map((c) => (
+              <CategoryRow
+                key={c.id}
+                c={c}
+                setDragged={setDragged}
+                handleDrop={handleDrop}
+                setEditing={setEditing}
+                setDeleting={setDeleting}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 🔥 PAGINATION */}
+      {totalPages > 1 && (
+        <div className="mt-8 flex flex-col md:flex-row items-center justify-between gap-4 text-[#f3ead7]">
+
+          <p className="text-sm text-[#f3ead7]/70">
+            Showing {(page - 1) * perPage + 1}–
+            {Math.min(page * perPage, categories.length)} of {categories.length}
+          </p>
+
+          <div className="flex gap-2">
+            <button
+              disabled={page === 1}
+              onClick={() => setPage(page - 1)}
+              className="px-3 py-1 border border-white/10 rounded-lg disabled:opacity-30"
+            >
+              Prev
+            </button>
+
+            {Array.from({ length: totalPages }).map((_, i) => {
+              const p = i + 1;
+
+              if (
+                p !== 1 &&
+                p !== totalPages &&
+                Math.abs(p - page) > 1
+              ) return null;
+
+              return (
+                <button
+                  key={p}
+                  onClick={() => setPage(p)}
+                  className={`px-3 py-1 rounded-lg ${
+                    page === p
+                      ? "bg-[#ff7a59] text-white"
+                      : "border border-white/10"
+                  }`}
+                >
+                  {p}
+                </button>
+              );
+            })}
+
+            <button
+              disabled={page === totalPages}
+              onClick={() => setPage(page + 1)}
+              className="px-3 py-1 border border-white/10 rounded-lg disabled:opacity-30"
+            >
+              Next
+            </button>
           </div>
-        )}
-
-        <h3 className="text-base font-semibold md:text-lg truncate group-hover:text-[#ff7a59] transition">
-          {c.name}
-        </h3>
-
-        <p className="mt-1 text-xs text-black/50 md:text-sm truncate">
-          {c.slug}
-        </p>
-      </div>
-
-      {/* ACTIONS */}
-      <div className="mt-4 flex gap-2">
-        <button
-          onClick={() => setEditing(c)}
-          className="w-full inline-flex items-center justify-center rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:shadow-md md:text-sm"
-        >
-          Update
-        </button>
-
-        <button
-          onClick={() => setDeleting(c)}
-          className="w-full inline-flex items-center justify-center rounded-lg border border-red-400/40 px-3 py-2 text-xs font-semibold text-red-500 transition-all duration-200 hover:scale-[1.03] hover:bg-red-500 hover:text-white hover:shadow-md md:text-sm"
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  ))}
-</div>
-
-      {/* PAGINATION (same logic preserved) */}
-      <div className="mt-8 flex justify-between items-center text-sm text-[#f3ead7]/70">
-        <p>Showing {categories.length} categories</p>
-        <div className="flex gap-2">
-          <button className="px-3 py-1 border border-white/10 rounded-lg opacity-40">
-            Previous
-          </button>
-          <button className="px-3 py-1 bg-[#ff7a59] text-white rounded-lg">
-            1
-          </button>
-          <button className="px-3 py-1 border border-white/10 rounded-lg opacity-40">
-            Next
-          </button>
         </div>
-      </div>
+      )}
 
-      {/* ADD / EDIT MODAL */}
+      {/* MODALS unchanged */}
       {(adding || editing) && (
-        <Modal
-          title={adding ? "Add New Category" : "Edit Category"}
-          onClose={() => {
-            setAdding(false);
-            setEditing(null);
-          }}
-        >
-          <Input
-            label="Category Name"
-            value={editing?.name || newCategory.name}
-            onChange={(v: string) =>
-              editing
-                ? setEditing({ ...editing, name: v })
-                : setNewCategory({ ...newCategory, name: v })
-            }
-          />
+        <Modal title="Category" onClose={closeModal}>
+          <Input label="Name" value={form.name} onChange={(v: string) => setForm({ ...form, name: v })} />
+          <Input label="Slug" value={form.slug} onChange={(v: string) => setForm({ ...form, slug: v })} />
 
-          <Input
-            label="Slug"
-            value={editing?.slug || newCategory.slug}
-            onChange={(v: string) =>
-              editing
-                ? setEditing({ ...editing, slug: v })
-                : setNewCategory({ ...newCategory, slug: v })
-            }
-          />
-
-          {!editing && (
-            <div className="mt-5 flex flex-col items-center gap-3">
-              <label className="cursor-pointer border border-dashed border-[#ff7a59]/50 rounded-xl px-6 py-6 text-sm text-[#ff7a59] hover:bg-[#ff7a59]/10">
-                Upload Image
-                <input
-                  type="file"
-                  hidden
-                  onChange={(e) => setFile(e.target.files?.[0] || null)}
-                />
-              </label>
-
-              {file && (
-                <img
-                  src={URL.createObjectURL(file)}
-                  className="h-28 w-28 rounded-xl object-cover"
-                />
-              )}
-            </div>
-          )}
-
-          {editing?.image && (
-            <img
-              src={editing.image}
-              className="mt-4 h-28 w-28 rounded-xl object-cover mx-auto"
-            />
-          )}
+          <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} className="mt-4" />
 
           <button
             onClick={adding ? handleAdd : handleUpdate}
-            className="mt-6 w-full rounded-xl bg-[#ff7a59] py-3 text-white font-semibold hover:opacity-90"
+            className="mt-6 w-full bg-[#ff7a59] text-white py-3 rounded-xl"
           >
-            {adding ? "Create Category" : "Save Changes"}
+            Save
           </button>
         </Modal>
       )}
 
-      {/* DELETE MODAL */}
       {deleting && (
-        <Modal title="Delete Category" onClose={() => setDeleting(null)}>
-          <p className="text-sm text-black">
-            Are you sure you want to delete{" "}
-            <span className="font-semibold">{deleting.name}</span>?
-          </p>
-
-          <div className="mt-6 flex gap-3">
-            <button
-              onClick={() => setDeleting(null)}
-              className="w-full border border-black/20 py-2 rounded-lg text-black"
-            >
-              Cancel
-            </button>
-
-            <button
-              onClick={confirmDelete}
-              className="w-full bg-red-500 text-white py-2 rounded-lg"
-            >
-              Delete
-            </button>
-          </div>
+        <Modal title="Delete" onClose={() => setDeleting(null)}>
+          <button
+            onClick={confirmDelete}
+            className="bg-red-500 text-white px-4 py-2 rounded"
+          >
+            Confirm Delete
+          </button>
         </Modal>
       )}
     </div>
   );
 }
 
-/* COMPONENTS */
+/* 🔥 MEMO ROW */
+const CategoryRow = React.memo(function CategoryRow({
+  c,
+  setDragged,
+  handleDrop,
+  setEditing,
+  setDeleting,
+}: any) {
+  return (
+    <tr
+      draggable
+      onDragStart={() => setDragged(c)}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={() => handleDrop(c)}
+      className="border-b bg-[#ece2cb] text-black hover:bg-[#f5ecd7]"
+    >
+      <td className="p-3">
+        <img
+          src={imageCache.get(c.image) || c.image}
+          className="h-12 w-12 rounded-lg object-cover"
+        />
+      </td>
 
+      <td className="p-3 font-semibold">{c.name}</td>
+      <td className="p-3">{c.slug}</td>
+      <td className="p-3">{c.order}</td>
+
+      <td className="p-3 text-right">
+        <button onClick={() => setEditing(c)} className="bg-[#ff7a59] px-3 py-1 text-white rounded mr-2">
+          Update
+        </button>
+
+        <button onClick={() => setDeleting(c)} className="border border-red-400 px-3 py-1 text-red-500">
+          Delete
+        </button>
+      </td>
+    </tr>
+  );
+});
+
+/* UI */
 function Modal({ children, title, onClose }: any) {
   return (
     <div className="fixed inset-0 bg-black/70 flex justify-center items-center">
-      <div className="bg-[#e8dcc7] p-6 rounded-3xl w-[90%] max-w-lg shadow-xl">
-        <div className="flex justify-between items-center mb-4">
+      <div className="bg-[#e8dcc7] p-6 rounded-3xl w-[90%] max-w-lg text-black">
+        <div className="flex justify-between mb-4">
           <h2 className="text-xl font-bold text-[#ff7a59]">{title}</h2>
-          <button onClick={onClose} className="text-black/60">
-            ✕
-          </button>
+          <button onClick={onClose}>✖</button>
         </div>
         {children}
       </div>
@@ -310,14 +410,12 @@ function Modal({ children, title, onClose }: any) {
 function Input({ label, value, onChange }: any) {
   return (
     <div className="mt-3">
-      <label className="text-black text-sm font-semibold">{label}</label>
+      <label className="font-semibold">{label}</label>
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded-xl border border-[#ff7a59]/70 bg-white px-4 py-3 text-black focus:outline-none focus:ring-2 focus:ring-[#ff7a59]"
+        className="w-full border border-[#ff7a59] rounded-xl p-3 mt-1"
       />
     </div>
   );
 }
-
-/* COMPONENTS */
