@@ -42,6 +42,41 @@ export default function Page() {
     fetchData();
   }, []);
 
+  /* EXPORT CSV */
+  const exportToCSV = () => {
+    if (requests.length === 0) return;
+
+    const headers = ["Name", "Email", "Message", "Date"];
+
+    const rows = requests.map((r) => [
+      r.name,
+      r.email,
+      r.message?.replace(/\n/g, " "),
+      r.timestamp?.toDate
+        ? r.timestamp.toDate().toLocaleString()
+        : "",
+    ]);
+
+    const csvContent = [headers, ...rows]
+      .map((row) =>
+        row
+          .map((cell) => `"${String(cell || "").replace(/"/g, '""')}"`)
+          .join(",")
+      )
+      .join("\n");
+
+    const blob = new Blob([csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `support_requests_${Date.now()}.csv`;
+    link.click();
+  };
+
   /* PAGINATION */
   const totalPages = Math.ceil(requests.length / perPage);
 
@@ -54,14 +89,23 @@ export default function Page() {
     <div className="px-4 pt-6 pb-10 md:px-8">
 
       {/* HEADER */}
-      <div>
-        <h1 className="text-4xl font-bold tracking-tight text-[#ff7a59] md:text-5xl">
-          All Support Requests
-        </h1>
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-4xl font-bold tracking-tight text-[#ff7a59] md:text-5xl">
+            All Support Requests
+          </h1>
 
-        <p className="mt-2 text-lg font-medium text-[#e8dcc7] md:text-xl">
-          General questions or requests for information.
-        </p>
+          <p className="mt-2 text-lg font-medium text-[#e8dcc7] md:text-xl">
+            General questions or requests for information.
+          </p>
+        </div>
+
+        <button
+          onClick={exportToCSV}
+          className="rounded-xl border border-[#ff7a59] px-5 py-2 text-[#ff7a59] hover:bg-[#ff7a59] hover:text-white transition"
+        >
+          Export CSV
+        </button>
       </div>
 
       {/* MAIN */}
@@ -89,25 +133,27 @@ export default function Page() {
         </div>
 
         {/* PAGINATION */}
-        <div className="mt-8 flex justify-between items-center text-[#f3ead7]">
-          <button
-            disabled={page === 1}
-            onClick={() => setPage(page - 1)}
-            className="opacity-70 hover:opacity-100"
-          >
-            Prev
-          </button>
+        {totalPages > 1 && (
+          <div className="mt-8 flex justify-between items-center text-[#f3ead7]">
+            <button
+              disabled={page === 1}
+              onClick={() => setPage(page - 1)}
+              className="opacity-70 hover:opacity-100 disabled:opacity-30"
+            >
+              Prev
+            </button>
 
-          <span>{page} / {totalPages}</span>
+            <span>{page} / {totalPages}</span>
 
-          <button
-            disabled={page === totalPages}
-            onClick={() => setPage(page + 1)}
-            className="opacity-70 hover:opacity-100"
-          >
-            Next
-          </button>
-        </div>
+            <button
+              disabled={page === totalPages}
+              onClick={() => setPage(page + 1)}
+              className="opacity-70 hover:opacity-100 disabled:opacity-30"
+            >
+              Next
+            </button>
+          </div>
+        )}
       </section>
 
       {/* VIEW MODAL */}
