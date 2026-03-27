@@ -21,7 +21,7 @@ export default function Sidebar() {
 
   return (
     <aside className="min-h-screen w-[290px] bg-[#efe5cf] p-4 text-black">
-      <div className="mt-40 space-y-2">
+      <div className="mt-32 space-y-2">
         {menuItems.map((item) => {
           const isActive = pathname === item.path;
 
