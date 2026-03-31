@@ -26,6 +26,8 @@ type Challenge = {
   id: string;
   title: string;
   video: string;
+  isActive: boolean;
+  reviews?: string[];
 };
 
 export default function Page() {
@@ -51,18 +53,17 @@ export default function Page() {
 
       const snap = await getDocs(q);
 
-      const data = snap.docs
-        .map((d) => {
-          const x = d.data();
-          if (!x?.title || !x?.video) return null;
+      const data = snap.docs.map((d) => {
+        const x = d.data();
 
-          return {
-            id: d.id,
-            title: x.title,
-            video: x.video,
-          };
-        })
-        .filter(Boolean) as Challenge[];
+        return {
+          id: d.id,
+          title: x.title,
+          video: x.video,
+          isActive: x.isActive || false,
+          reviews: x.reviews || [],
+        };
+      });
 
       setChallenges(data);
     };
@@ -80,11 +81,30 @@ export default function Page() {
     );
 
     await uploadBytes(storageRef, file);
-
     return await getDownloadURL(storageRef);
   };
 
-  /* ADD */
+  /* SET ACTIVE */
+  const setActiveChallenge = async (id: string) => {
+    const snap = await getDocs(collection(db, "challenges"));
+
+    await Promise.all(
+      snap.docs.map((d) =>
+        updateDoc(doc(db, "challenges", d.id), {
+          isActive: d.id === id,
+        })
+      )
+    );
+
+    setChallenges((prev) =>
+      prev.map((c) => ({
+        ...c,
+        isActive: c.id === id,
+      }))
+    );
+  };
+
+  /* ADD (AUTO ACTIVE) */
   const handleAdd = async () => {
     let videoUrl = form.video;
 
@@ -94,15 +114,35 @@ export default function Page() {
 
     if (!form.title || !videoUrl) return;
 
+    // deactivate all
+    const snap = await getDocs(collection(db, "challenges"));
+
+    await Promise.all(
+      snap.docs.map((d) =>
+        updateDoc(doc(db, "challenges", d.id), {
+          isActive: false,
+        })
+      )
+    );
+
+    // create new active
     const docRef = await addDoc(collection(db, "challenges"), {
       title: form.title,
       video: videoUrl,
       createdAt: serverTimestamp(),
+      isActive: true,
+      reviews: [],
     });
 
     setChallenges((prev) => [
-      { id: docRef.id, title: form.title, video: videoUrl },
-      ...prev,
+      {
+        id: docRef.id,
+        title: form.title,
+        video: videoUrl,
+        isActive: true,
+        reviews: [],
+      },
+      ...prev.map((c) => ({ ...c, isActive: false })),
     ]);
 
     closeModal();
@@ -156,21 +196,16 @@ export default function Page() {
 
   return (
     <div className="px-4 pt-6 pb-10 md:px-8">
-      {/* HEADER */}
-      <div className="flex flex-col gap-5 md:flex-row md:justify-between">
-        <div>
-          <h1 className="text-4xl font-bold text-[#ff7a59] md:text-5xl">
-            Challenge
-          </h1>
 
-          <p className="mt-2 text-lg text-[#e8dcc7]">
-            Admin can create, manage, and update weekly challenge videos easily.
-          </p>
-        </div>
+      {/* HEADER */}
+      <div className="flex justify-between items-center">
+        <h1 className="text-4xl font-bold text-[#ff7a59]">
+          Challenge
+        </h1>
 
         <button
           onClick={() => setAdding(true)}
-          className="inline-flex h-11 items-center justify-center rounded-xl border border-[#ff7a59] px-5 text-sm font-semibold text-[#ff7a59] hover:bg-[#ff7a59] hover:text-white"
+          className="border border-[#ff7a59] px-5 py-2 rounded-xl text-[#ff7a59] hover:bg-[#ff7a59] hover:text-white transition"
         >
           Add Challenge
         </button>
@@ -190,6 +225,7 @@ export default function Page() {
               });
             }}
             onDelete={() => setDeleting(challenge)}
+            onSetActive={() => setActiveChallenge(challenge.id)}
           />
         ))}
       </section>
@@ -206,24 +242,21 @@ export default function Page() {
           />
 
           <Input
-            label="Video URL (optional)"
+            label="Video URL"
             value={form.video}
             onChange={(v: string) =>
               setForm({ ...form, video: v })
             }
           />
 
-          <div className="mt-4">
-            <label className="font-semibold">Upload Video</label>
-            <input
-              type="file"
-              accept="video/*"
-              onChange={(e) =>
-                setFile(e.target.files?.[0] || null)
-              }
-              className="mt-2"
-            />
-          </div>
+          <input
+            type="file"
+            accept="video/*"
+            onChange={(e) =>
+              setFile(e.target.files?.[0] || null)
+            }
+            className="mt-3"
+          />
 
           <button
             onClick={adding ? handleAdd : handleUpdate}
@@ -237,13 +270,9 @@ export default function Page() {
       {/* DELETE */}
       {deleting && (
         <Modal title="Delete" onClose={() => setDeleting(null)}>
-          <p className="text-black">
-            Delete <b>{deleting.title}</b>?
-          </p>
-
           <button
             onClick={confirmDelete}
-            className="mt-4 w-full bg-red-500 text-white py-2 rounded-xl"
+            className="w-full bg-red-500 text-white py-2 rounded-xl"
           >
             Delete
           </button>
@@ -253,35 +282,110 @@ export default function Page() {
   );
 }
 
-/* CARD (UNCHANGED DESIGN — JUST DYNAMIC) */
+/* CARD */
 function ChallengeCard({
   title,
   video,
+  isActive,
+  reviews = [],
   onEdit,
   onDelete,
+  onSetActive,
 }: any) {
+  const [open, setOpen] = useState(false);
+
   return (
-    <div className="rounded-2xl border border-[#ff7a59]/60 bg-[#0a0a0a] p-6">
-      <div className="overflow-hidden rounded-xl bg-black">
-        <video controls className="w-full rounded-xl">
-          <source src={video} type="video/mp4" />
-        </video>
+    <div className="rounded-2xl border border-[#ff7a59]/60 bg-[#0a0a0a] p-6 space-y-5">
+
+      {/* HEADER */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-white truncate">
+          {title}
+        </h3>
+
+        {isActive && (
+          <span className="text-xs bg-green-500/20 text-green-400 px-3 py-1 rounded-full">
+            Active
+          </span>
+        )}
       </div>
 
-      <div className="mt-5 flex items-center justify-between rounded-lg bg-[#ff7a59] px-5 py-3 text-white">
-        <span className="text-sm font-semibold md:text-base">
-          {title}
-        </span>
+      {/* VIDEO */}
+      <video controls className="w-full rounded-xl">
+        <source src={video} />
+      </video>
 
-        <div className="flex items-center gap-3">
-          <button onClick={onEdit} className="hover:opacity-80">
-            ✏️
-          </button>
+      {/* INFO BAR */}
+      <div className="flex items-center justify-between text-sm text-[#f3ead7]">
 
-          <button onClick={onDelete} className="hover:opacity-80">
-            🗑️
+        <div className="flex items-center gap-2">
+          <span className="font-medium">{reviews.length}</span>
+          <span className="text-white/60">
+            {reviews.length === 1 ? "Comment" : "Comments"}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+
+          {!isActive && (
+            <button
+              onClick={onSetActive}
+              className="rounded-lg bg-[#ff7a59] px-3 py-1 text-xs font-semibold text-white"
+            >
+              Set Active
+            </button>
+          )}
+
+          <button
+            onClick={() => setOpen(!open)}
+            className="rounded-lg border border-white/20 px-3 py-1 text-xs text-white"
+          >
+            {open ? "Hide Comments" : "View Comments"}
           </button>
         </div>
+      </div>
+
+      {/* COMMENTS */}
+      {open && (
+        <div className="border-t border-white/10 pt-4">
+
+          {reviews.length === 0 ? (
+            <div className="rounded-lg bg-white/5 p-3 text-sm text-white/50 text-center">
+              No comments yet
+            </div>
+          ) : (
+            <div className="max-h-44 space-y-2 overflow-y-auto">
+              {reviews.map((comment: string, i: number) => (
+                <div
+                  key={i}
+                  className="rounded-lg bg-[#ece2cb] px-3 py-2 text-sm text-black"
+                >
+                  {comment}
+                </div>
+              ))}
+            </div>
+          )}
+
+        </div>
+      )}
+
+      {/* ACTIONS */}
+      <div className="flex justify-end gap-3 border-t border-white/10 pt-4">
+
+        <button
+          onClick={onEdit}
+          className="rounded-lg bg-[#ff7a59] px-4 py-1.5 text-xs font-semibold text-white"
+        >
+          Edit
+        </button>
+
+        <button
+          onClick={onDelete}
+          className="rounded-lg border border-red-400 px-4 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-500 hover:text-white"
+        >
+          Delete
+        </button>
+
       </div>
     </div>
   );
