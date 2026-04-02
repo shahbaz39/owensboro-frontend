@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   collection,
   getDocs,
@@ -56,6 +56,7 @@ type ListingForm = {
   websiteUrl: string;
   facebookUrl: string;
   locationUrl: string;
+  order: number | "";
 };
 
 const EMPTY_FORM: ListingForm = {
@@ -70,6 +71,7 @@ const EMPTY_FORM: ListingForm = {
   websiteUrl: "",
   facebookUrl: "",
   locationUrl: "",
+  order: "",
 };
 
 export default function Page() {
@@ -85,11 +87,15 @@ export default function Page() {
   const [file, setFile] = useState<File | null>(null);
   const [removeExistingImage, setRemoveExistingImage] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingOrder, setSavingOrder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [orderChanged, setOrderChanged] = useState(false);
 
   const [form, setForm] = useState<ListingForm>(EMPTY_FORM);
-  const imageCache = new Map<string, string>();
+
+  const imageCacheRef = useRef<Map<string, string>>(new Map());
+
   /* PAGINATION */
   const [page, setPage] = useState(1);
   const perPage = 12;
@@ -158,14 +164,17 @@ export default function Page() {
           };
         });
 
-        setListings(data.sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
+        const sorted = data.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+
+        setListings(sorted);
         setCategories(cats);
         setSubCategories(subs);
-        data.forEach((item) => {
-          if (item.image && !imageCache.has(item.image)) {
+
+        sorted.forEach((item) => {
+          if (item.image && !imageCacheRef.current.has(item.image)) {
             const img = new Image();
             img.src = item.image;
-            imageCache.set(item.image, item.image);
+            imageCacheRef.current.set(item.image, item.image);
           }
         });
       } catch (err) {
@@ -227,6 +236,7 @@ export default function Page() {
       websiteUrl: listing.websiteUrl || "",
       facebookUrl: listing.facebookUrl || "",
       locationUrl: listing.locationUrl || "",
+      order: listing.order ?? "",
     });
     setError("");
   };
@@ -240,6 +250,9 @@ export default function Page() {
     if (!form.location.trim()) return "Location is required.";
     if (!form.time.trim()) return "Time is required.";
     if (!form.contact.trim()) return "Contact is required.";
+    if (form.order !== "" && Number(form.order) < 1) {
+      return "Order must be greater than 0.";
+    }
     return "";
   };
 
@@ -274,6 +287,38 @@ export default function Page() {
     return lastOrder + 1;
   };
 
+  const normalizeOrders = (items: Listing[]) =>
+    items
+      .sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
+      .map((item, index) => ({
+        ...item,
+        order: index + 1,
+      }));
+
+  const insertListingAtOrder = (
+    currentListings: Listing[],
+    item: Listing,
+    targetOrder: number,
+  ) => {
+    const withoutItem = currentListings.filter((l) => l.id !== item.id);
+    const normalized = normalizeOrders(withoutItem);
+
+    const insertIndex = Math.min(
+      Math.max(targetOrder - 1, 0),
+      normalized.length,
+    );
+
+    normalized.splice(insertIndex, 0, {
+      ...item,
+      order: targetOrder,
+    });
+
+    return normalized.map((entry, index) => ({
+      ...entry,
+      order: index + 1,
+    }));
+  };
+
   /* ADD */
   const handleAdd = async () => {
     const validationError = validateForm();
@@ -290,7 +335,46 @@ export default function Page() {
       const catRef = doc(db, "Catagories", form.categoryId);
       const subRef = doc(db, "SubCatagories", form.subCategoryId);
       const newDocRef = doc(collection(db, "Products"));
-      const nextOrder = await getNextOrder();
+
+      const autoNextOrder = await getNextOrder();
+      const desiredOrder =
+        form.order !== "" ? Number(form.order) : autoNextOrder;
+
+      const cat = categories.find((c) => c.id === form.categoryId);
+      const sub = subCategories.find((s) => s.id === form.subCategoryId);
+
+      const newListing: Listing = {
+        id: newDocRef.id,
+        title: form.title,
+        category: cat?.name || "",
+        subCategory: sub?.name || "",
+        categoryId: form.categoryId,
+        subCategoryId: form.subCategoryId,
+        location: form.location,
+        about: form.about,
+        shortDescription: form.shortDescription,
+        time: form.time,
+        contact: form.contact,
+        image: imageUrl,
+        websiteUrl: form.websiteUrl,
+        facebookUrl: form.facebookUrl,
+        locationUrl: form.locationUrl,
+        order: desiredOrder,
+      };
+
+      const reordered = insertListingAtOrder(listings, newListing, desiredOrder);
+      const finalOrder =
+        reordered.find((entry) => entry.id === newListing.id)?.order ?? desiredOrder;
+
+      await Promise.all(
+        reordered
+          .filter((entry) => entry.id !== newListing.id)
+          .map((entry) =>
+            updateDoc(doc(db, "Products", entry.id), {
+              order: entry.order,
+            }),
+          ),
+      );
 
       await setDoc(newDocRef, {
         productName: form.title,
@@ -307,36 +391,10 @@ export default function Page() {
         locationUrl: form.locationUrl,
         createdAt: new Date(),
         productRef: newDocRef,
-        order: nextOrder,
+        order: finalOrder,
       });
 
-      const cat = categories.find((c) => c.id === form.categoryId);
-      const sub = subCategories.find((s) => s.id === form.subCategoryId);
-
-      setListings((prev) =>
-        [
-          {
-            id: newDocRef.id,
-            title: form.title,
-            category: cat?.name || "",
-            subCategory: sub?.name || "",
-            categoryId: form.categoryId,
-            subCategoryId: form.subCategoryId,
-            location: form.location,
-            about: form.about,
-            shortDescription: form.shortDescription,
-            time: form.time,
-            contact: form.contact,
-            image: imageUrl,
-            websiteUrl: form.websiteUrl,
-            facebookUrl: form.facebookUrl,
-            locationUrl: form.locationUrl,
-            order: nextOrder,
-          },
-          ...prev,
-        ].sort((a, b) => (a.order ?? 999) - (b.order ?? 999)),
-      );
-
+      setListings(reordered);
       setPage(1);
       closeModal();
     } catch (err) {
@@ -375,6 +433,45 @@ export default function Page() {
         nextImageUrl = "";
       }
 
+      const cat = categories.find((c) => c.id === form.categoryId);
+      const sub = subCategories.find((s) => s.id === form.subCategoryId);
+
+      const desiredOrder =
+        form.order !== "" ? Number(form.order) : editing.order ?? 999;
+
+      const updatedListing: Listing = {
+        ...editing,
+        title: form.title,
+        category: cat?.name || "",
+        subCategory: sub?.name || "",
+        categoryId: form.categoryId,
+        subCategoryId: form.subCategoryId,
+        location: form.location,
+        about: form.about,
+        shortDescription: form.shortDescription,
+        time: form.time,
+        contact: form.contact,
+        image: nextImageUrl,
+        websiteUrl: form.websiteUrl,
+        facebookUrl: form.facebookUrl,
+        locationUrl: form.locationUrl,
+        order: desiredOrder,
+      };
+
+      const reordered = insertListingAtOrder(listings, updatedListing, desiredOrder);
+      const finalOrder =
+        reordered.find((entry) => entry.id === editing.id)?.order ?? desiredOrder;
+
+      await Promise.all(
+        reordered
+          .filter((entry) => entry.id !== editing.id)
+          .map((entry) =>
+            updateDoc(doc(db, "Products", entry.id), {
+              order: entry.order,
+            }),
+          ),
+      );
+
       await updateDoc(doc(db, "Products", editing.id), {
         productName: form.title,
         catagoryRef: catRef,
@@ -388,37 +485,10 @@ export default function Page() {
         websiteUrl: form.websiteUrl,
         facebookUrl: form.facebookUrl,
         locationUrl: form.locationUrl,
+        order: finalOrder,
       });
 
-      const cat = categories.find((c) => c.id === form.categoryId);
-      const sub = subCategories.find((s) => s.id === form.subCategoryId);
-
-      setListings((prev) =>
-        prev
-          .map((l) =>
-            l.id === editing.id
-              ? {
-                  ...l,
-                  title: form.title,
-                  category: cat?.name || "",
-                  subCategory: sub?.name || "",
-                  categoryId: form.categoryId,
-                  subCategoryId: form.subCategoryId,
-                  location: form.location,
-                  about: form.about,
-                  shortDescription: form.shortDescription,
-                  time: form.time,
-                  contact: form.contact,
-                  image: nextImageUrl,
-                  websiteUrl: form.websiteUrl,
-                  facebookUrl: form.facebookUrl,
-                  locationUrl: form.locationUrl,
-                }
-              : l,
-          )
-          .sort((a, b) => (a.order ?? 999) - (b.order ?? 999)),
-      );
-
+      setListings(reordered);
       closeModal();
     } catch (err) {
       console.error(err);
@@ -427,8 +497,8 @@ export default function Page() {
     }
   };
 
-  /* DRAG DROP */
-  const handleDropRow = async (target: Listing) => {
+  /* DRAG DROP - UI ONLY */
+  const handleDropRow = (target: Listing) => {
     if (!dragged || dragged.id === target.id) return;
 
     try {
@@ -447,17 +517,32 @@ export default function Page() {
 
       setListings(reordered);
       setDragged(null);
-
-      await Promise.all(
-        reordered.map((item) =>
-          updateDoc(doc(db, "Products", item.id), {
-            order: item.order,
-          }),
-        ),
-      );
+      setOrderChanged(true);
     } catch (err) {
       console.error(err);
       setError("Failed to reorder listings.");
+    }
+  };
+
+  const saveOrderChanges = async () => {
+    try {
+      setSavingOrder(true);
+      setError("");
+
+      await Promise.all(
+        listings.map((item) =>
+          updateDoc(doc(db, "Products", item.id), {
+            order: item.order ?? 999,
+          }),
+        ),
+      );
+
+      setOrderChanged(false);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to save order changes.");
+    } finally {
+      setSavingOrder(false);
     }
   };
 
@@ -470,8 +555,14 @@ export default function Page() {
       await safelyDeleteImageByUrl(deleting.image);
 
       const remaining = listings.filter((l) => l.id !== deleting.id);
-      setListings(remaining);
+      const reorderedRemaining = remaining.map((item, index) => ({
+        ...item,
+        order: index + 1,
+      }));
+
+      setListings(reorderedRemaining);
       setDeleting(null);
+      setOrderChanged(true);
 
       const nextTotalPages = Math.max(1, Math.ceil(remaining.length / perPage));
       if (page > nextTotalPages) {
@@ -501,13 +592,31 @@ export default function Page() {
           </p>
         </div>
 
-        <button
-          onClick={openAddModal}
-          className="rounded-xl border border-[#ff7a59] px-5 py-2 text-[#ff7a59] transition hover:bg-[#ff7a59] hover:text-white"
-        >
-          Add Listing
-        </button>
+        <div className="flex items-center gap-3">
+          {orderChanged && (
+            <button
+              onClick={saveOrderChanges}
+              disabled={savingOrder}
+              className="rounded-xl border border-emerald-500 px-5 py-2 text-emerald-400 transition hover:bg-emerald-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {savingOrder ? "Saving Order..." : "Save Order"}
+            </button>
+          )}
+
+          <button
+            onClick={openAddModal}
+            className="rounded-xl border border-[#ff7a59] px-5 py-2 text-[#ff7a59] transition hover:bg-[#ff7a59] hover:text-white"
+          >
+            Add Listing
+          </button>
+        </div>
       </div>
+
+      {error && !adding && !editing && (
+        <div className="mb-6 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      )}
 
       {/* LIST */}
       {loading ? (
@@ -545,7 +654,7 @@ export default function Page() {
                   <td className="p-3">
                     {l.image ? (
                       <img
-                        src={imageCache.get(l.image!) || l.image}
+                        src={imageCacheRef.current.get(l.image) || l.image}
                         loading="eager"
                         className="h-12 w-12 rounded-lg object-cover border"
                       />
@@ -662,6 +771,17 @@ export default function Page() {
             label="Title"
             value={form.title}
             onChange={(v: string) => setForm((prev) => ({ ...prev, title: v }))}
+          />
+
+          <Input
+            label="Order"
+            value={form.order === "" ? "" : String(form.order)}
+            onChange={(v: string) =>
+              setForm((prev) => ({
+                ...prev,
+                order: v === "" ? "" : Number(v),
+              }))
+            }
           />
 
           <Input
