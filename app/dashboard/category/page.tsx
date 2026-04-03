@@ -9,7 +9,6 @@ import {
   deleteDoc,
   doc,
 } from "firebase/firestore";
-
 import {
   ref,
   uploadBytes,
@@ -39,8 +38,10 @@ export default function Page() {
 
   const [dragged, setDragged] = useState<Category | null>(null);
 
-  const [form, setForm] = useState({ name: "", slug: "" });
+  const [form, setForm] = useState({ name: "", slug: "", order: "" });
   const [file, setFile] = useState<File | null>(null);
+
+  const [saving, setSaving] = useState(false);
 
   const preloadingRef = useRef<Set<string>>(new Set());
 
@@ -77,30 +78,30 @@ export default function Page() {
   };
 
   /* FETCH */
+  const fetchData = async () => {
+    const snap = await getDocs(collection(db, "Catagories"));
+
+    const data: Category[] = snap.docs.map((d) => {
+      const x = d.data();
+      return {
+        id: d.id,
+        name: x.catagoryName,
+        slug: x.slug || "",
+        image: x.image || "",
+        order: x.order ?? 999,
+      };
+    });
+
+    data.forEach((item) => {
+      if (item.image) preloadImage(item.image);
+    });
+
+    setCategories(
+      data.sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
+    );
+  };
+
   useEffect(() => {
-    const fetchData = async () => {
-      const snap = await getDocs(collection(db, "Catagories"));
-
-      const data = snap.docs.map((d) => {
-        const x = d.data();
-        return {
-          id: d.id,
-          name: x.catagoryName,
-          slug: x.slug || "",
-          image: x.image || "",
-          order: x.order ?? 999,
-        };
-      });
-
-      data.forEach((item) => {
-        if (item.image) preloadImage(item.image);
-      });
-
-      setCategories(
-        data.sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
-      );
-    };
-
     fetchData();
   }, []);
 
@@ -122,110 +123,236 @@ export default function Page() {
     return url;
   };
 
-  /* ADD */
-  const handleAdd = async () => {
-    const imageUrl = await uploadImage();
+  const normalizeOrders = (items: Category[]) =>
+    [...items]
+      .sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
+      .map((item, index) => ({
+        ...item,
+        order: index + 1,
+      }));
 
-    const docRef = await addDoc(collection(db, "Catagories"), {
-      catagoryName: form.name,
-      slug: form.slug,
-      image: imageUrl,
-      order: categories.length + 1,
+  const insertCategoryAtOrder = (
+    currentCategories: Category[],
+    item: Category,
+    targetOrder: number
+  ) => {
+    const withoutItem = currentCategories.filter((c) => c.id !== item.id);
+    const normalized = normalizeOrders(withoutItem);
+
+    const insertIndex = Math.min(
+      Math.max(targetOrder - 1, 0),
+      normalized.length
+    );
+
+    normalized.splice(insertIndex, 0, {
+      ...item,
+      order: targetOrder,
     });
 
-    setCategories((prev) => [
-      {
-        id: docRef.id,
+    return normalized.map((entry, index) => ({
+      ...entry,
+      order: index + 1,
+    }));
+  };
+
+  const closeModal = () => {
+    setAdding(false);
+    setEditing(null);
+    setForm({ name: "", slug: "", order: "" });
+    setFile(null);
+  };
+
+  /* ADD */
+  const handleAdd = async () => {
+    try {
+      setSaving(true);
+
+      const imageUrl = await uploadImage();
+      const newDocRef = doc(collection(db, "Catagories"));
+
+      const desiredOrder =
+        form.order !== "" ? Number(form.order) : categories.length + 1;
+
+      const newCategory: Category = {
+        id: newDocRef.id,
         name: form.name,
         slug: form.slug,
         image: imageUrl,
-        order: prev.length + 1,
-      },
-      ...prev,
-    ]);
+        order: desiredOrder,
+      };
 
-    closeModal();
+      const reordered = insertCategoryAtOrder(
+        categories,
+        newCategory,
+        desiredOrder
+      );
+
+      const finalOrder =
+        reordered.find((entry) => entry.id === newCategory.id)?.order ??
+        desiredOrder;
+
+      await Promise.all(
+        reordered
+          .filter((entry) => entry.id !== newCategory.id)
+          .map((entry) =>
+            updateDoc(doc(db, "Catagories", entry.id), {
+              order: entry.order,
+            })
+          )
+      );
+
+      await updateDoc(newDocRef, {
+        catagoryName: form.name,
+        slug: form.slug,
+        image: imageUrl,
+        order: finalOrder,
+      });
+
+      await fetchData();
+      closeModal();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setSaving(false);
+    }
   };
 
   /* UPDATE */
   const handleUpdate = async () => {
     if (!editing) return;
 
-    let imageUrl = editing.image;
+    try {
+      setSaving(true);
 
-    if (file) {
-      await deleteObject(ref(storage, editing.image));
-      imageUrl = await uploadImage();
+      let imageUrl = editing.image;
+
+      if (file) {
+        if (editing.image) {
+          await deleteObject(ref(storage, editing.image));
+        }
+        imageUrl = await uploadImage();
+      }
+
+      const desiredOrder =
+        form.order !== "" ? Number(form.order) : editing.order ?? 999;
+
+      const updatedCategory: Category = {
+        ...editing,
+        name: form.name,
+        slug: form.slug,
+        image: imageUrl,
+        order: desiredOrder,
+      };
+
+      const updatedCategories = categories.map((item) =>
+        item.id === editing.id ? updatedCategory : item
+      );
+
+      const reordered = insertCategoryAtOrder(
+        updatedCategories,
+        updatedCategory,
+        desiredOrder
+      );
+
+      const finalOrder =
+        reordered.find((entry) => entry.id === editing.id)?.order ??
+        desiredOrder;
+
+      await Promise.all(
+        reordered
+          .filter((entry) => entry.id !== editing.id)
+          .map((entry) =>
+            updateDoc(doc(db, "Catagories", entry.id), {
+              order: entry.order,
+            })
+          )
+      );
+
+      await updateDoc(doc(db, "Catagories", editing.id), {
+        catagoryName: form.name,
+        slug: form.slug,
+        image: imageUrl,
+        order: finalOrder,
+      });
+
+      await fetchData();
+      closeModal();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setSaving(false);
     }
-
-    await updateDoc(doc(db, "Catagories", editing.id), {
-      catagoryName: form.name,
-      slug: form.slug,
-      image: imageUrl,
-    });
-
-    setCategories((prev) =>
-      prev.map((c) =>
-        c.id === editing.id
-          ? { ...c, name: form.name, slug: form.slug, image: imageUrl }
-          : c
-      )
-    );
-
-    closeModal();
   };
 
   /* DELETE */
   const confirmDelete = async () => {
     if (!deleting) return;
 
-    await deleteDoc(doc(db, "Catagories", deleting.id));
-    await deleteObject(ref(storage, deleting.image));
+    try {
+      await deleteDoc(doc(db, "Catagories", deleting.id));
 
-    setCategories((prev) =>
-      prev.filter((c) => c.id !== deleting.id)
-    );
+      if (deleting.image) {
+        await deleteObject(ref(storage, deleting.image));
+      }
 
-    setDeleting(null);
+      const remaining = categories.filter((c) => c.id !== deleting.id);
+      const reorderedRemaining = remaining.map((item, index) => ({
+        ...item,
+        order: index + 1,
+      }));
+
+      setCategories(reorderedRemaining);
+
+      await Promise.all(
+        reorderedRemaining.map((item) =>
+          updateDoc(doc(db, "Catagories", item.id), {
+            order: item.order,
+          })
+        )
+      );
+
+      setDeleting(null);
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   /* DRAG DROP */
   const handleDrop = async (target: Category) => {
     if (!dragged || dragged.id === target.id) return;
 
-    const updated = [...categories];
-    const from = updated.findIndex((i) => i.id === dragged.id);
-    const to = updated.findIndex((i) => i.id === target.id);
+    try {
+      const updated = [...categories];
+      const from = updated.findIndex((i) => i.id === dragged.id);
+      const to = updated.findIndex((i) => i.id === target.id);
 
-    const [moved] = updated.splice(from, 1);
-    updated.splice(to, 0, moved);
+      if (from === -1 || to === -1) return;
 
-    const reordered = updated.map((item, index) => ({
-      ...item,
-      order: index + 1,
-    }));
+      const [moved] = updated.splice(from, 1);
+      updated.splice(to, 0, moved);
 
-    setCategories(reordered);
+      const reordered = updated.map((item, index) => ({
+        ...item,
+        order: index + 1,
+      }));
 
-    await Promise.all(
-      reordered.map((item) =>
-        updateDoc(doc(db, "Catagories", item.id), {
-          order: item.order,
-        })
-      )
-    );
-  };
+      setCategories(reordered);
+      setDragged(null);
 
-  const closeModal = () => {
-    setAdding(false);
-    setEditing(null);
-    setForm({ name: "", slug: "" });
-    setFile(null);
+      await Promise.all(
+        reordered.map((item) =>
+          updateDoc(doc(db, "Catagories", item.id), {
+            order: item.order,
+          })
+        )
+      );
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   return (
     <div className="px-6 pt-6 pb-10">
-
       {/* HEADER */}
       <div className="flex justify-between mb-8">
         <h1 className="text-4xl font-bold text-[#ff7a59]">
@@ -260,7 +387,14 @@ export default function Page() {
                 c={c}
                 setDragged={setDragged}
                 handleDrop={handleDrop}
-                setEditing={setEditing}
+                setEditing={(cat: Category) => {
+                  setEditing(cat);
+                  setForm({
+                    name: cat.name,
+                    slug: cat.slug,
+                    order: cat.order ? String(cat.order) : "",
+                  });
+                }}
                 setDeleting={setDeleting}
               />
             ))}
@@ -271,7 +405,6 @@ export default function Page() {
       {/* 🔥 PAGINATION */}
       {totalPages > 1 && (
         <div className="mt-8 flex flex-col md:flex-row items-center justify-between gap-4 text-[#f3ead7]">
-
           <p className="text-sm text-[#f3ead7]/70">
             Showing {(page - 1) * perPage + 1}–
             {Math.min(page * perPage, categories.length)} of {categories.length}
@@ -321,19 +454,39 @@ export default function Page() {
         </div>
       )}
 
-      {/* MODALS unchanged */}
       {(adding || editing) && (
         <Modal title="Category" onClose={closeModal}>
-          <Input label="Name" value={form.name} onChange={(v: string) => setForm({ ...form, name: v })} />
-          <Input label="Slug" value={form.slug} onChange={(v: string) => setForm({ ...form, slug: v })} />
+          <Input
+            label="Name"
+            value={form.name}
+            onChange={(v: string) => setForm({ ...form, name: v })}
+          />
+          <Input
+            label="Slug"
+            value={form.slug}
+            onChange={(v: string) => setForm({ ...form, slug: v })}
+          />
+          <Input
+            label="Order"
+            value={form.order}
+            onChange={(v: string) => setForm({ ...form, order: v })}
+          />
 
-          <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} className="mt-4" />
+          <input
+            type="file"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            className="mt-4"
+          />
 
           <button
             onClick={adding ? handleAdd : handleUpdate}
-            className="mt-6 w-full bg-[#ff7a59] text-white py-3 rounded-xl"
+            disabled={saving}
+            className="mt-6 w-full bg-[#ff7a59] text-white py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60"
           >
-            Save
+            {saving && (
+              <span className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+            )}
+            {saving ? "Saving..." : "Save"}
           </button>
         </Modal>
       )}
@@ -380,11 +533,17 @@ const CategoryRow = React.memo(function CategoryRow({
       <td className="p-3">{c.order}</td>
 
       <td className="p-3 text-right">
-        <button onClick={() => setEditing(c)} className="bg-[#ff7a59] px-3 py-1 text-white rounded mr-2">
+        <button
+          onClick={() => setEditing(c)}
+          className="bg-[#ff7a59] px-3 py-1 text-white rounded mr-2"
+        >
           Update
         </button>
 
-        <button onClick={() => setDeleting(c)} className="border border-red-400 px-3 py-1 text-red-500">
+        <button
+          onClick={() => setDeleting(c)}
+          className="border border-red-400 px-3 py-1 text-red-500"
+        >
           Delete
         </button>
       </td>

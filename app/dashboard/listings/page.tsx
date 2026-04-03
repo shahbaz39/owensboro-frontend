@@ -87,10 +87,8 @@ export default function Page() {
   const [file, setFile] = useState<File | null>(null);
   const [removeExistingImage, setRemoveExistingImage] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [savingOrder, setSavingOrder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [orderChanged, setOrderChanged] = useState(false);
 
   const [form, setForm] = useState<ListingForm>(EMPTY_FORM);
 
@@ -109,82 +107,82 @@ export default function Page() {
   }, [listings, safePage]);
 
   /* FETCH */
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const [productSnap, catSnap, subSnap] = await Promise.all([
+        getDocs(collection(db, "Products")),
+        getDocs(collection(db, "Catagories")),
+        getDocs(collection(db, "SubCatagories")),
+      ]);
+
+      const cats: Category[] = catSnap.docs.map((d) => ({
+        id: d.id,
+        name: d.data().catagoryName || "Untitled Category",
+      }));
+
+      const subs: SubCategory[] = subSnap.docs.map((d) => ({
+        id: d.id,
+        name:
+          d.data().name ||
+          d.data().subCategoryName ||
+          "Untitled Sub Category",
+        categoryId: d.data().catagoriesRef?.id || "",
+      }));
+
+      const data: Listing[] = productSnap.docs.map((d) => {
+        const x = d.data();
+
+        const catId = x.catagoryRef?.id || "";
+        const subId = x.subCatagoryRef?.id || "";
+
+        const cat = cats.find((c) => c.id === catId);
+        const sub = subs.find((s) => s.id === subId);
+
+        return {
+          id: d.id,
+          title: x.productName || "",
+          category: cat?.name || "",
+          subCategory: sub?.name || "",
+          categoryId: catId,
+          subCategoryId: subId,
+          location: x.productLocation || "",
+          about: x.about || "",
+          shortDescription: x.shortDescription || "",
+          time: x.time || "",
+          contact: x.contactInfo || "",
+          image: x.imageUrl || "",
+          websiteUrl: x.websiteUrl || "",
+          facebookUrl: x.facebookUrl || "",
+          locationUrl: x.locationUrl || "",
+          order: x.order ?? 999,
+        };
+      });
+
+      const sorted = data.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+
+      setListings(sorted);
+      setCategories(cats);
+      setSubCategories(subs);
+
+      sorted.forEach((item) => {
+        if (item.image && !imageCacheRef.current.has(item.image)) {
+          const img = new Image();
+          img.src = item.image;
+          imageCacheRef.current.set(item.image, item.image);
+        }
+      });
+    } catch (err) {
+      console.error(err);
+      setError("Failed to load listings.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        setError("");
-
-        const [productSnap, catSnap, subSnap] = await Promise.all([
-          getDocs(collection(db, "Products")),
-          getDocs(collection(db, "Catagories")),
-          getDocs(collection(db, "SubCatagories")),
-        ]);
-
-        const cats: Category[] = catSnap.docs.map((d) => ({
-          id: d.id,
-          name: d.data().catagoryName || "Untitled Category",
-        }));
-
-        const subs: SubCategory[] = subSnap.docs.map((d) => ({
-          id: d.id,
-          name:
-            d.data().name ||
-            d.data().subCategoryName ||
-            "Untitled Sub Category",
-          categoryId: d.data().catagoriesRef?.id || "",
-        }));
-
-        const data: Listing[] = productSnap.docs.map((d) => {
-          const x = d.data();
-
-          const catId = x.catagoryRef?.id || "";
-          const subId = x.subCatagoryRef?.id || "";
-
-          const cat = cats.find((c) => c.id === catId);
-          const sub = subs.find((s) => s.id === subId);
-
-          return {
-            id: d.id,
-            title: x.productName || "",
-            category: cat?.name || "",
-            subCategory: sub?.name || "",
-            categoryId: catId,
-            subCategoryId: subId,
-            location: x.productLocation || "",
-            about: x.about || "",
-            shortDescription: x.shortDescription || "",
-            time: x.time || "",
-            contact: x.contactInfo || "",
-            image: x.imageUrl || "",
-            websiteUrl: x.websiteUrl || "",
-            facebookUrl: x.facebookUrl || "",
-            locationUrl: x.locationUrl || "",
-            order: x.order ?? 999,
-          };
-        });
-
-        const sorted = data.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
-
-        setListings(sorted);
-        setCategories(cats);
-        setSubCategories(subs);
-
-        sorted.forEach((item) => {
-          if (item.image && !imageCacheRef.current.has(item.image)) {
-            const img = new Image();
-            img.src = item.image;
-            imageCacheRef.current.set(item.image, item.image);
-          }
-        });
-      } catch (err) {
-        console.error(err);
-        setError("Failed to load listings.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchData();
   }, []);
 
@@ -364,7 +362,8 @@ export default function Page() {
 
       const reordered = insertListingAtOrder(listings, newListing, desiredOrder);
       const finalOrder =
-        reordered.find((entry) => entry.id === newListing.id)?.order ?? desiredOrder;
+        reordered.find((entry) => entry.id === newListing.id)?.order ??
+        desiredOrder;
 
       await Promise.all(
         reordered
@@ -394,12 +393,13 @@ export default function Page() {
         order: finalOrder,
       });
 
-      setListings(reordered);
+      await fetchData();
       setPage(1);
       closeModal();
     } catch (err) {
       console.error(err);
       setError("Failed to create listing.");
+    } finally {
       setSaving(false);
     }
   };
@@ -437,7 +437,7 @@ export default function Page() {
       const sub = subCategories.find((s) => s.id === form.subCategoryId);
 
       const desiredOrder =
-        form.order !== "" ? Number(form.order) : editing.order ?? 999;
+        form.order !== "" ? Number(form.order) : (editing.order ?? 999);
 
       const updatedListing: Listing = {
         ...editing,
@@ -458,9 +458,19 @@ export default function Page() {
         order: desiredOrder,
       };
 
-      const reordered = insertListingAtOrder(listings, updatedListing, desiredOrder);
+      const updatedListings = listings.map((item) =>
+        item.id === editing.id ? updatedListing : item,
+      );
+
+      const reordered = insertListingAtOrder(
+        updatedListings,
+        updatedListing,
+        desiredOrder,
+      );
+
       const finalOrder =
-        reordered.find((entry) => entry.id === editing.id)?.order ?? desiredOrder;
+        reordered.find((entry) => entry.id === editing.id)?.order ??
+        desiredOrder;
 
       await Promise.all(
         reordered
@@ -488,17 +498,18 @@ export default function Page() {
         order: finalOrder,
       });
 
-      setListings(reordered);
+      await fetchData();
       closeModal();
     } catch (err) {
       console.error(err);
       setError("Failed to update listing.");
+    } finally {
       setSaving(false);
     }
   };
 
-  /* DRAG DROP - UI ONLY */
-  const handleDropRow = (target: Listing) => {
+  /* DRAG DROP - AUTO SAVE */
+  const handleDropRow = async (target: Listing) => {
     if (!dragged || dragged.id === target.id) return;
 
     try {
@@ -517,32 +528,17 @@ export default function Page() {
 
       setListings(reordered);
       setDragged(null);
-      setOrderChanged(true);
-    } catch (err) {
-      console.error(err);
-      setError("Failed to reorder listings.");
-    }
-  };
-
-  const saveOrderChanges = async () => {
-    try {
-      setSavingOrder(true);
-      setError("");
 
       await Promise.all(
-        listings.map((item) =>
+        reordered.map((item) =>
           updateDoc(doc(db, "Products", item.id), {
             order: item.order ?? 999,
           }),
         ),
       );
-
-      setOrderChanged(false);
     } catch (err) {
       console.error(err);
-      setError("Failed to save order changes.");
-    } finally {
-      setSavingOrder(false);
+      setError("Failed to reorder listings.");
     }
   };
 
@@ -562,7 +558,14 @@ export default function Page() {
 
       setListings(reorderedRemaining);
       setDeleting(null);
-      setOrderChanged(true);
+
+      await Promise.all(
+        reorderedRemaining.map((item) =>
+          updateDoc(doc(db, "Products", item.id), {
+            order: item.order ?? 999,
+          }),
+        ),
+      );
 
       const nextTotalPages = Math.max(1, Math.ceil(remaining.length / perPage));
       if (page > nextTotalPages) {
@@ -593,16 +596,6 @@ export default function Page() {
         </div>
 
         <div className="flex items-center gap-3">
-          {orderChanged && (
-            <button
-              onClick={saveOrderChanges}
-              disabled={savingOrder}
-              className="rounded-xl border border-emerald-500 px-5 py-2 text-emerald-400 transition hover:bg-emerald-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {savingOrder ? "Saving Order..." : "Save Order"}
-            </button>
-          )}
-
           <button
             onClick={openAddModal}
             className="rounded-xl border border-[#ff7a59] px-5 py-2 text-[#ff7a59] transition hover:bg-[#ff7a59] hover:text-white"
@@ -656,7 +649,7 @@ export default function Page() {
                       <img
                         src={imageCacheRef.current.get(l.image) || l.image}
                         loading="eager"
-                        className="h-12 w-12 rounded-lg object-cover border"
+                        className="h-12 w-12 rounded-lg border object-cover"
                       />
                     ) : (
                       <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-black/10 bg-black/5 text-[10px] text-black/35">
@@ -901,8 +894,11 @@ export default function Page() {
           <button
             onClick={adding ? handleAdd : handleUpdate}
             disabled={saving}
-            className="mt-6 w-full rounded-xl bg-[#ff7a59] py-3 text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-[#ff7a59] py-3 text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
+            {saving && (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+            )}
             {saving
               ? adding
                 ? "Creating..."
