@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, query, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebaseServices";
 
 /* TYPES */
@@ -21,26 +21,33 @@ export default function Page() {
   const perPage = 8;
 
   /* FETCH */
-  useEffect(() => {
-    const fetchData = async () => {
-      const snap = await getDocs(collection(db, "ContactUs"));
+useEffect(() => {
+  const fetchData = async () => {
 
-      const data = snap.docs.map((d) => {
-        const x = d.data();
-        return {
-          id: d.id,
-          name: x.name,
-          email: x.email,
-          message: x.message,
-          timestamp: x.timestamp,
-        };
-      });
+    const q = query(
+      collection(db, "ContactUs"),
+      orderBy("timestamp", "desc")
+    );
 
-      setRequests(data);
-    };
+    // ✅ YOU MISSED THIS LINE
+    const snap = await getDocs(q);
 
-    fetchData();
-  }, []);
+    const data = snap.docs.map((d) => {
+      const x = d.data();
+      return {
+        id: d.id,
+        name: x.name,
+        email: x.email,
+        message: x.message,
+        timestamp: x.timestamp,
+      };
+    });
+
+    setRequests(data);
+  };
+
+  fetchData();
+}, []);
 
   /* EXPORT CSV */
   const exportToCSV = () => {

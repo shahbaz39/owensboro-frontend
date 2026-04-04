@@ -243,11 +243,6 @@ export default function Page() {
     if (!form.categoryId) return "Please select a category.";
     if (!form.subCategoryId) return "Please select a sub category.";
     if (!form.title.trim()) return "Title is required.";
-    if (!form.shortDescription.trim()) return "Short description is required.";
-    if (!form.about.trim()) return "About is required.";
-    if (!form.location.trim()) return "Location is required.";
-    if (!form.time.trim()) return "Time is required.";
-    if (!form.contact.trim()) return "Contact is required.";
     if (form.order !== "" && Number(form.order) < 1) {
       return "Order must be greater than 0.";
     }
