@@ -4,10 +4,10 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   collection,
   getDocs,
-  addDoc,
   updateDoc,
   deleteDoc,
   doc,
+  setDoc,
 } from "firebase/firestore";
 import {
   ref,
@@ -163,59 +163,59 @@ export default function Page() {
   };
 
   /* ADD */
-  const handleAdd = async () => {
-    try {
-      setSaving(true);
+ const handleAdd = async () => {
+  try {
+    setSaving(true);
 
-      const imageUrl = await uploadImage();
-      const newDocRef = doc(collection(db, "Catagories"));
+    const imageUrl = await uploadImage();
+    const newDocRef = doc(collection(db, "Catagories"));
 
-      const desiredOrder =
-        form.order !== "" ? Number(form.order) : categories.length + 1;
+    const desiredOrder =
+      form.order !== "" ? Number(form.order) : categories.length + 1;
 
-      const newCategory: Category = {
-        id: newDocRef.id,
-        name: form.name,
-        slug: form.slug,
-        image: imageUrl,
-        order: desiredOrder,
-      };
+    const newCategory: Category = {
+      id: newDocRef.id,
+      name: form.name,
+      slug: form.slug,
+      image: imageUrl,
+      order: desiredOrder,
+    };
 
-      const reordered = insertCategoryAtOrder(
-        categories,
-        newCategory,
-        desiredOrder
-      );
+    const reordered = insertCategoryAtOrder(
+      categories,
+      newCategory,
+      desiredOrder
+    );
 
-      const finalOrder =
-        reordered.find((entry) => entry.id === newCategory.id)?.order ??
-        desiredOrder;
+    const finalOrder =
+      reordered.find((entry) => entry.id === newCategory.id)?.order ??
+      desiredOrder;
 
-      await Promise.all(
-        reordered
-          .filter((entry) => entry.id !== newCategory.id)
-          .map((entry) =>
-            updateDoc(doc(db, "Catagories", entry.id), {
-              order: entry.order,
-            })
-          )
-      );
+    await Promise.all(
+      reordered
+        .filter((entry) => entry.id !== newCategory.id)
+        .map((entry) =>
+          updateDoc(doc(db, "Catagories", entry.id), {
+            order: entry.order,
+          })
+        )
+    );
 
-      await updateDoc(newDocRef, {
-        catagoryName: form.name,
-        slug: form.slug,
-        image: imageUrl,
-        order: finalOrder,
-      });
+    await setDoc(newDocRef, {
+      catagoryName: form.name,
+      slug: form.slug,
+      image: imageUrl,
+      order: finalOrder,
+    });
 
-      await fetchData();
-      closeModal();
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setSaving(false);
-    }
-  };
+    await fetchData();
+    closeModal();
+  } catch (error) {
+    console.error(error);
+  } finally {
+    setSaving(false);
+  }
+};
 
   /* UPDATE */
   const handleUpdate = async () => {
