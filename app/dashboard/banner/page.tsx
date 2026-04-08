@@ -252,7 +252,7 @@ export default function Page() {
               <th className="p-3">Image</th>
               <th className="p-3">Title</th>
               <th className="p-3">SubCategory</th>
-              <th className="p-3">Product</th>
+              <th className="p-3">Listing</th>
               <th className="p-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -306,7 +306,7 @@ export default function Page() {
           <Select value={form.productId}
             onChange={(v:any)=>setForm({...form,productId:v})}
             options={filteredProducts}
-            placeholder="Select Product"
+            placeholder="Select Listing"
           />
 
           <div className="mt-4 border border-[#ff7a59] rounded-xl p-4">

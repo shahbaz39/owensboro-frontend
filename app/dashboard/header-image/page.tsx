@@ -71,7 +71,7 @@ export default function Page() {
         subCategoryId: d.data().subCatagoryRef?.id,
       }));
 
-      const data = headerSnap.docs.map((d) => {
+      const data: HeaderImage[] = headerSnap.docs.map((d) => {
         const x = d.data();
 
         const sub = subs.find((s) => s.id === x.subCategoryId);
@@ -79,11 +79,16 @@ export default function Page() {
 
         return {
           id: d.id,
-          ...x,
+          title: x.title || "",
+          image: x.image || "",
+          subCategoryId: x.subCategoryId || "",
+          productId: x.productId || "",
           subCategoryName: sub?.name || "",
           productName: prod?.title || "",
         };
       });
+
+      setItems(data);
 
       setItems(data);
       setSubCategories(subs);
@@ -106,9 +111,7 @@ export default function Page() {
 
   /* FILTER PRODUCTS */
   const filteredProducts = useMemo(() => {
-    return products.filter(
-      (p) => p.subCategoryId === form.subCategoryId
-    );
+    return products.filter((p) => p.subCategoryId === form.subCategoryId);
   }, [products, form.subCategoryId]);
 
   /* VALIDATION */
@@ -149,8 +152,7 @@ export default function Page() {
         image: imageUrl,
         subCategoryName:
           subCategories.find((s) => s.id === form.subCategoryId)?.name || "",
-        productName:
-          products.find((p) => p.id === form.productId)?.title || "",
+        productName: products.find((p) => p.id === form.productId)?.title || "",
       },
       ...prev,
     ]);
@@ -193,8 +195,8 @@ export default function Page() {
               productName:
                 products.find((p) => p.id === form.productId)?.title || "",
             }
-          : i
-      )
+          : i,
+      ),
     );
 
     closeModal();
@@ -231,12 +233,9 @@ export default function Page() {
 
   return (
     <div className="px-6 pt-6 pb-10">
-
       {/* HEADER */}
       <div className="flex justify-between mb-8">
-        <h1 className="text-4xl font-bold text-[#ff7a59]">
-          Header Images
-        </h1>
+        <h1 className="text-4xl font-bold text-[#ff7a59]">Header Images</h1>
 
         <button
           onClick={() => setAdding(true)}
@@ -296,20 +295,31 @@ export default function Page() {
         <Modal title="Header Image" onClose={closeModal}>
           {error && <div className="text-red-500 mb-2">{error}</div>}
 
-          <Input label="Title" value={form.title} onChange={(v:any)=>setForm({...form,title:v})}/>
+          <Input
+            label="Title"
+            value={form.title}
+            onChange={(v: any) => setForm({ ...form, title: v })}
+          />
 
-          <Select label="SubCategory" value={form.subCategoryId}
-            onChange={(v:any)=>setForm({...form,subCategoryId:v,productId:""})}
+          <Select
+            label="SubCategory"
+            value={form.subCategoryId}
+            onChange={(v: any) =>
+              setForm({ ...form, subCategoryId: v, productId: "" })
+            }
             options={subCategories}
           />
 
-          <Select label="Listing" value={form.productId}
-            onChange={(v:any)=>setForm({...form,productId:v})}
+          <Select
+            label="Listing"
+            value={form.productId}
+            onChange={(v: any) => setForm({ ...form, productId: v })}
             options={filteredProducts}
           />
 
-          <input type="file"
-            onChange={(e)=>setFile(e.target.files?.[0]||null)}
+          <input
+            type="file"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
             className="mt-4 w-full border rounded-xl p-3"
           />
 
@@ -371,7 +381,7 @@ function Input({ label, value, onChange }: any) {
       <label className="font-semibold">{label}</label>
       <input
         value={value}
-        onChange={(e)=>onChange(e.target.value)}
+        onChange={(e) => onChange(e.target.value)}
         className="w-full border rounded-xl p-3 mt-1"
       />
     </div>
@@ -384,11 +394,11 @@ function Select({ label, value, onChange, options }: any) {
       <label className="font-semibold">{label}</label>
       <select
         value={value}
-        onChange={(e)=>onChange(e.target.value)}
+        onChange={(e) => onChange(e.target.value)}
         className="w-full border rounded-xl p-3 mt-1"
       >
         <option value="">Select</option>
-        {options.map((o:any)=>(
+        {options.map((o: any) => (
           <option key={o.id} value={o.id}>
             {o.name || o.title}
           </option>
