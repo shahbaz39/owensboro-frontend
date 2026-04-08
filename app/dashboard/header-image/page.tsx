@@ -132,17 +132,30 @@ export default function Page() {
   };
 
   /* ADD */
-  const handleAdd = async () => {
-    const err = validate();
-    if (err) return setError(err);
+ const handleAdd = async () => {
+  const err = validate();
+  if (err) return setError(err);
 
-    setLoading(true);
+  setLoading(true);
 
+  try {
     const imageUrl = await uploadImage();
 
+    // 🔥 create references
+    const subRef = doc(db, "SubCatagories", form.subCategoryId);
+    const prodRef = doc(db, "Products", form.productId);
+
     const docRef = await addDoc(collection(db, "HeaderImages"), {
-      ...form,
+      title: form.title,
       image: imageUrl,
+
+      subCategoryId: form.subCategoryId,
+      productId: form.productId,
+
+      subCategoryRef: subRef,   // ✅ FIX
+      productRef: prodRef,      // ✅ FIX
+
+      createdAt: new Date(),    // ✅ FIX
     });
 
     setItems((prev) => [
@@ -152,34 +165,54 @@ export default function Page() {
         image: imageUrl,
         subCategoryName:
           subCategories.find((s) => s.id === form.subCategoryId)?.name || "",
-        productName: products.find((p) => p.id === form.productId)?.title || "",
+        productName:
+          products.find((p) => p.id === form.productId)?.title || "",
       },
       ...prev,
     ]);
 
     closeModal();
+  } catch (err) {
+    console.error(err);
+  } finally {
     setLoading(false);
-  };
+  }
+};
 
   /* UPDATE */
-  const handleUpdate = async () => {
-    if (!editing) return;
+const handleUpdate = async () => {
+  if (!editing) return;
 
-    const err = validate();
-    if (err) return setError(err);
+  const err = validate();
+  if (err) return setError(err);
 
-    setLoading(true);
+  setLoading(true);
 
+  try {
     let imageUrl = editing.image;
 
     if (file) {
-      await deleteObject(ref(storage, editing.image));
+      try {
+        const decoded = decodeURIComponent(editing.image);
+        const path = decoded.split("/o/")[1]?.split("?")[0];
+        if (path) await deleteObject(ref(storage, path));
+      } catch {}
+
       imageUrl = await uploadImage();
     }
 
+    const subRef = doc(db, "SubCatagories", form.subCategoryId);
+    const prodRef = doc(db, "Products", form.productId);
+
     await updateDoc(doc(db, "HeaderImages", editing.id), {
-      ...form,
+      title: form.title,
       image: imageUrl,
+
+      subCategoryId: form.subCategoryId,
+      productId: form.productId,
+
+      subCategoryRef: subRef,  // ✅ FIX
+      productRef: prodRef,     // ✅ FIX
     });
 
     setItems((prev) =>
@@ -195,13 +228,15 @@ export default function Page() {
               productName:
                 products.find((p) => p.id === form.productId)?.title || "",
             }
-          : i,
-      ),
+          : i
+      )
     );
 
     closeModal();
+  } finally {
     setLoading(false);
-  };
+  }
+};
 
   /* DELETE */
   const confirmDelete = async () => {
