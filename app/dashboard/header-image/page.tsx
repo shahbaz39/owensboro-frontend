@@ -25,18 +25,12 @@ type HeaderImage = {
   image: string;
   subCategoryId: string;
   productId: string;
+  subCategoryName?: string;
+  productName?: string;
 };
 
-type SubCategory = {
-  id: string;
-  name: string;
-};
-
-type Product = {
-  id: string;
-  title: string;
-  subCategoryId: string;
-};
+type SubCategory = { id: string; name: string };
+type Product = { id: string; title: string; subCategoryId: string };
 
 export default function Page() {
   const [items, setItems] = useState<HeaderImage[]>([]);
@@ -55,6 +49,7 @@ export default function Page() {
 
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   /* FETCH */
   useEffect(() => {
@@ -65,39 +60,46 @@ export default function Page() {
         getDocs(collection(db, "Products")),
       ]);
 
-      setItems(
-        headerSnap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        })) as HeaderImage[]
-      );
+      const subs = subSnap.docs.map((d) => ({
+        id: d.id,
+        name: d.data().name,
+      }));
 
-      setSubCategories(
-        subSnap.docs.map((d) => ({
-          id: d.id,
-          name: d.data().name,
-        }))
-      );
+      const prods = productSnap.docs.map((d) => ({
+        id: d.id,
+        title: d.data().productName,
+        subCategoryId: d.data().subCatagoryRef?.id,
+      }));
 
-      setProducts(
-        productSnap.docs.map((d) => ({
+      const data = headerSnap.docs.map((d) => {
+        const x = d.data();
+
+        const sub = subs.find((s) => s.id === x.subCategoryId);
+        const prod = prods.find((p) => p.id === x.productId);
+
+        return {
           id: d.id,
-          title: d.data().productName,
-          subCategoryId: d.data().subCatagoryRef?.id,
-        }))
-      );
+          ...x,
+          subCategoryName: sub?.name || "",
+          productName: prod?.title || "",
+        };
+      });
+
+      setItems(data);
+      setSubCategories(subs);
+      setProducts(prods);
     };
 
     fetchData();
   }, []);
 
-  /* PREFILL FORM */
+  /* PREFILL */
   useEffect(() => {
     if (editing) {
       setForm({
-        title: editing.title || "",
-        subCategoryId: editing.subCategoryId || "",
-        productId: editing.productId || "",
+        title: editing.title,
+        subCategoryId: editing.subCategoryId,
+        productId: editing.productId,
       });
     }
   }, [editing]);
@@ -109,7 +111,16 @@ export default function Page() {
     );
   }, [products, form.subCategoryId]);
 
-  /* IMAGE UPLOAD */
+  /* VALIDATION */
+  const validate = () => {
+    if (!form.title) return "Title is required";
+    if (!form.subCategoryId) return "SubCategory is required";
+    if (!form.productId) return "Listing is required";
+    if (adding && !file) return "Image is required";
+    return "";
+  };
+
+  /* IMAGE */
   const uploadImage = async () => {
     if (!file) return "";
     const r = ref(storage, `header/${Date.now()}-${file.name}`);
@@ -119,30 +130,27 @@ export default function Page() {
 
   /* ADD */
   const handleAdd = async () => {
-    if (!form.title || !file || !form.subCategoryId || !form.productId)
-      return;
+    const err = validate();
+    if (err) return setError(err);
 
     setLoading(true);
 
     const imageUrl = await uploadImage();
 
     const docRef = await addDoc(collection(db, "HeaderImages"), {
-      title: form.title,
+      ...form,
       image: imageUrl,
-      subCategoryId: form.subCategoryId,
-      productId: form.productId,
-      subCategoryRef: doc(db, "SubCatagories", form.subCategoryId),
-      productRef: doc(db, "Products", form.productId),
-      createdAt: new Date(),
     });
 
     setItems((prev) => [
       {
         id: docRef.id,
-        title: form.title,
+        ...form,
         image: imageUrl,
-        subCategoryId: form.subCategoryId,
-        productId: form.productId,
+        subCategoryName:
+          subCategories.find((s) => s.id === form.subCategoryId)?.name || "",
+        productName:
+          products.find((p) => p.id === form.productId)?.title || "",
       },
       ...prev,
     ]);
@@ -155,6 +163,9 @@ export default function Page() {
   const handleUpdate = async () => {
     if (!editing) return;
 
+    const err = validate();
+    if (err) return setError(err);
+
     setLoading(true);
 
     let imageUrl = editing.image;
@@ -165,10 +176,8 @@ export default function Page() {
     }
 
     await updateDoc(doc(db, "HeaderImages", editing.id), {
-      title: form.title,
+      ...form,
       image: imageUrl,
-      subCategoryId: form.subCategoryId,
-      productId: form.productId,
     });
 
     setItems((prev) =>
@@ -176,10 +185,13 @@ export default function Page() {
         i.id === editing.id
           ? {
               ...i,
-              title: form.title,
+              ...form,
               image: imageUrl,
-              subCategoryId: form.subCategoryId,
-              productId: form.productId,
+              subCategoryName:
+                subCategories.find((s) => s.id === form.subCategoryId)?.name ||
+                "",
+              productName:
+                products.find((p) => p.id === form.productId)?.title || "",
             }
           : i
       )
@@ -193,18 +205,28 @@ export default function Page() {
   const confirmDelete = async () => {
     if (!deleting) return;
 
-    await deleteDoc(doc(db, "HeaderImages", deleting.id));
-    await deleteObject(ref(storage, deleting.image));
+    try {
+      await deleteDoc(doc(db, "HeaderImages", deleting.id));
 
-    setItems((prev) => prev.filter((i) => i.id !== deleting.id));
-    setDeleting(null);
+      try {
+        await deleteObject(ref(storage, deleting.image));
+      } catch (err) {
+        console.log("Image delete failed:", err);
+      }
+
+      setItems((prev) => prev.filter((i) => i.id !== deleting.id));
+      setDeleting(null);
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
   };
 
   const closeModal = () => {
     setAdding(false);
     setEditing(null);
-    setForm({ title: "", subCategoryId: "", productId: "" });
     setFile(null);
+    setError("");
+    setForm({ title: "", subCategoryId: "", productId: "" });
   };
 
   return (
@@ -231,6 +253,8 @@ export default function Page() {
             <tr>
               <th className="p-3">Image</th>
               <th className="p-3">Title</th>
+              <th className="p-3">SubCategory</th>
+              <th className="p-3">Listing</th>
               <th className="p-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -239,13 +263,12 @@ export default function Page() {
             {items.map((item) => (
               <tr key={item.id} className="border-b bg-[#ece2cb] text-black">
                 <td className="p-3">
-                  <img
-                    src={item.image}
-                    className="h-14 w-20 rounded-lg object-cover"
-                  />
+                  <img src={item.image} className="h-14 w-20 rounded-lg" />
                 </td>
 
                 <td className="p-3 font-semibold">{item.title}</td>
+                <td className="p-3">{item.subCategoryName}</td>
+                <td className="p-3">{item.productName}</td>
 
                 <td className="p-3 text-right">
                   <button
@@ -268,61 +291,27 @@ export default function Page() {
         </table>
       </div>
 
-      {/* MODAL */}
+      {/* ADD / EDIT MODAL */}
       {(adding || editing) && (
         <Modal title="Header Image" onClose={closeModal}>
+          {error && <div className="text-red-500 mb-2">{error}</div>}
 
-          <Input
-            label="Title"
-            value={form.title}
-            onChange={(v:any)=>setForm({...form,title:v})}
-          />
+          <Input label="Title" value={form.title} onChange={(v:any)=>setForm({...form,title:v})}/>
 
-          <Select
-            label="Sub Category"
-            value={form.subCategoryId}
+          <Select label="SubCategory" value={form.subCategoryId}
             onChange={(v:any)=>setForm({...form,subCategoryId:v,productId:""})}
             options={subCategories}
           />
 
-          <Select
-            label="Product"
-            value={form.productId}
+          <Select label="Listing" value={form.productId}
             onChange={(v:any)=>setForm({...form,productId:v})}
             options={filteredProducts}
           />
 
-          {/* ✅ EXISTING IMAGE */}
-          {editing && editing.image && !file && (
-            <div className="mt-3">
-              <p className="text-sm mb-1">Current Image:</p>
-              <img
-                src={editing.image}
-                className="h-20 w-32 object-cover rounded-lg border"
-              />
-            </div>
-          )}
-
-          {/* ✅ NEW IMAGE PREVIEW */}
-          {file && (
-            <div className="mt-3">
-              <p className="text-sm mb-1">New Image Preview:</p>
-              <img
-                src={URL.createObjectURL(file)}
-                className="h-20 w-32 object-cover rounded-lg border"
-              />
-            </div>
-          )}
-
-          {/* FILE INPUT */}
-          <div className="mt-4">
-            <label className="font-semibold text-black">Image</label>
-            <input
-              type="file"
-              onChange={(e)=>setFile(e.target.files?.[0]||null)}
-              className="mt-2 w-full border border-[#ff7a59] rounded-xl p-3"
-            />
-          </div>
+          <input type="file"
+            onChange={(e)=>setFile(e.target.files?.[0]||null)}
+            className="mt-4 w-full border rounded-xl p-3"
+          />
 
           <button
             onClick={adding ? handleAdd : handleUpdate}
@@ -330,19 +319,31 @@ export default function Page() {
           >
             {loading ? "Saving..." : "Save"}
           </button>
-
         </Modal>
       )}
 
-      {/* DELETE */}
+      {/* DELETE MODAL ✅ */}
       {deleting && (
-        <Modal title="Delete" onClose={()=>setDeleting(null)}>
-          <button
-            onClick={confirmDelete}
-            className="bg-red-500 text-white px-4 py-2 rounded"
-          >
-            Confirm Delete
-          </button>
+        <Modal title="Delete" onClose={() => setDeleting(null)}>
+          <p className="mb-4">
+            Are you sure you want to delete <b>{deleting.title}</b>?
+          </p>
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => setDeleting(null)}
+              className="w-full border py-2 rounded-xl"
+            >
+              Cancel
+            </button>
+
+            <button
+              onClick={confirmDelete}
+              className="w-full bg-red-500 text-white py-2 rounded-xl"
+            >
+              Delete
+            </button>
+          </div>
         </Modal>
       )}
     </div>
@@ -350,7 +351,6 @@ export default function Page() {
 }
 
 /* UI */
-
 function Modal({ children, title, onClose }: any) {
   return (
     <div className="fixed inset-0 bg-black/70 flex justify-center items-center">
@@ -368,11 +368,11 @@ function Modal({ children, title, onClose }: any) {
 function Input({ label, value, onChange }: any) {
   return (
     <div className="mt-3">
-      <label className="font-semibold text-black">{label}</label>
+      <label className="font-semibold">{label}</label>
       <input
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full border border-[#ff7a59] rounded-xl p-3 mt-1"
+        onChange={(e)=>onChange(e.target.value)}
+        className="w-full border rounded-xl p-3 mt-1"
       />
     </div>
   );
@@ -381,11 +381,11 @@ function Input({ label, value, onChange }: any) {
 function Select({ label, value, onChange, options }: any) {
   return (
     <div className="mt-3">
-      <label className="font-semibold text-black">{label}</label>
+      <label className="font-semibold">{label}</label>
       <select
         value={value}
         onChange={(e)=>onChange(e.target.value)}
-        className="w-full border border-[#ff7a59] rounded-xl p-3 mt-1"
+        className="w-full border rounded-xl p-3 mt-1"
       >
         <option value="">Select</option>
         {options.map((o:any)=>(
