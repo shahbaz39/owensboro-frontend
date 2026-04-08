@@ -51,10 +51,7 @@ export default function Page() {
 
   const totalPages = Math.ceil(categories.length / perPage);
 
-  const paginatedData = categories.slice(
-    (page - 1) * perPage,
-    page * perPage
-  );
+  const paginatedData = categories.slice((page - 1) * perPage, page * perPage);
 
   /* 🔥 PRELOAD IMAGE */
   const preloadImage = (src: string) => {
@@ -96,9 +93,7 @@ export default function Page() {
       if (item.image) preloadImage(item.image);
     });
 
-    setCategories(
-      data.sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
-    );
+    setCategories(data.sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
   };
 
   useEffect(() => {
@@ -134,14 +129,14 @@ export default function Page() {
   const insertCategoryAtOrder = (
     currentCategories: Category[],
     item: Category,
-    targetOrder: number
+    targetOrder: number,
   ) => {
     const withoutItem = currentCategories.filter((c) => c.id !== item.id);
     const normalized = normalizeOrders(withoutItem);
 
     const insertIndex = Math.min(
       Math.max(targetOrder - 1, 0),
-      normalized.length
+      normalized.length,
     );
 
     normalized.splice(insertIndex, 0, {
@@ -163,59 +158,59 @@ export default function Page() {
   };
 
   /* ADD */
- const handleAdd = async () => {
-  try {
-    setSaving(true);
+  const handleAdd = async () => {
+    try {
+      setSaving(true);
 
-    const imageUrl = await uploadImage();
-    const newDocRef = doc(collection(db, "Catagories"));
+      const imageUrl = await uploadImage();
+      const newDocRef = doc(collection(db, "Catagories"));
 
-    const desiredOrder =
-      form.order !== "" ? Number(form.order) : categories.length + 1;
+      const desiredOrder =
+        form.order !== "" ? Number(form.order) : categories.length + 1;
 
-    const newCategory: Category = {
-      id: newDocRef.id,
-      name: form.name,
-      slug: form.slug,
-      image: imageUrl,
-      order: desiredOrder,
-    };
+      const newCategory: Category = {
+        id: newDocRef.id,
+        name: form.name,
+        slug: form.slug,
+        image: imageUrl,
+        order: desiredOrder,
+      };
 
-    const reordered = insertCategoryAtOrder(
-      categories,
-      newCategory,
-      desiredOrder
-    );
+      const reordered = insertCategoryAtOrder(
+        categories,
+        newCategory,
+        desiredOrder,
+      );
 
-    const finalOrder =
-      reordered.find((entry) => entry.id === newCategory.id)?.order ??
-      desiredOrder;
+      const finalOrder =
+        reordered.find((entry) => entry.id === newCategory.id)?.order ??
+        desiredOrder;
 
-    await Promise.all(
-      reordered
-        .filter((entry) => entry.id !== newCategory.id)
-        .map((entry) =>
-          updateDoc(doc(db, "Catagories", entry.id), {
-            order: entry.order,
-          })
-        )
-    );
+      await Promise.all(
+        reordered
+          .filter((entry) => entry.id !== newCategory.id)
+          .map((entry) =>
+            updateDoc(doc(db, "Catagories", entry.id), {
+              order: entry.order,
+            }),
+          ),
+      );
 
-    await setDoc(newDocRef, {
-      catagoryName: form.name,
-      slug: form.slug,
-      image: imageUrl,
-      order: finalOrder,
-    });
+      await setDoc(newDocRef, {
+        catagoryName: form.name,
+        slug: form.slug,
+        image: imageUrl,
+        order: finalOrder,
+      });
 
-    await fetchData();
-    closeModal();
-  } catch (error) {
-    console.error(error);
-  } finally {
-    setSaving(false);
-  }
-};
+      await fetchData();
+      closeModal();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   /* UPDATE */
   const handleUpdate = async () => {
@@ -234,7 +229,7 @@ export default function Page() {
       }
 
       const desiredOrder =
-        form.order !== "" ? Number(form.order) : editing.order ?? 999;
+        form.order !== "" ? Number(form.order) : (editing.order ?? 999);
 
       const updatedCategory: Category = {
         ...editing,
@@ -245,13 +240,13 @@ export default function Page() {
       };
 
       const updatedCategories = categories.map((item) =>
-        item.id === editing.id ? updatedCategory : item
+        item.id === editing.id ? updatedCategory : item,
       );
 
       const reordered = insertCategoryAtOrder(
         updatedCategories,
         updatedCategory,
-        desiredOrder
+        desiredOrder,
       );
 
       const finalOrder =
@@ -264,8 +259,8 @@ export default function Page() {
           .map((entry) =>
             updateDoc(doc(db, "Catagories", entry.id), {
               order: entry.order,
-            })
-          )
+            }),
+          ),
       );
 
       await updateDoc(doc(db, "Catagories", editing.id), {
@@ -307,8 +302,8 @@ export default function Page() {
         reorderedRemaining.map((item) =>
           updateDoc(doc(db, "Catagories", item.id), {
             order: item.order,
-          })
-        )
+          }),
+        ),
       );
 
       setDeleting(null);
@@ -343,8 +338,8 @@ export default function Page() {
         reordered.map((item) =>
           updateDoc(doc(db, "Catagories", item.id), {
             order: item.order,
-          })
-        )
+          }),
+        ),
       );
     } catch (error) {
       console.error(error);
@@ -355,9 +350,7 @@ export default function Page() {
     <div className="px-6 pt-6 pb-10">
       {/* HEADER */}
       <div className="flex justify-between mb-8">
-        <h1 className="text-4xl font-bold text-[#ff7a59]">
-          Categories
-        </h1>
+        <h1 className="text-4xl font-bold text-[#ff7a59]">Categories</h1>
 
         <button
           onClick={() => setAdding(true)}
@@ -422,11 +415,8 @@ export default function Page() {
             {Array.from({ length: totalPages }).map((_, i) => {
               const p = i + 1;
 
-              if (
-                p !== 1 &&
-                p !== totalPages &&
-                Math.abs(p - page) > 1
-              ) return null;
+              if (p !== 1 && p !== totalPages && Math.abs(p - page) > 1)
+                return null;
 
               return (
                 <button
@@ -532,20 +522,22 @@ const CategoryRow = React.memo(function CategoryRow({
       <td className="p-3">{c.slug}</td>
       <td className="p-3">{c.order}</td>
 
-      <td className="p-3 text-right">
-        <button
-          onClick={() => setEditing(c)}
-          className="bg-[#ff7a59] px-3 py-1 text-white rounded mr-2"
-        >
-          Update
-        </button>
+      <td className="p-3">
+        <div className="flex justify-end items-center gap-2 whitespace-nowrap">
+          <button
+            onClick={() => setEditing(c)}
+            className="bg-[#ff7a59] px-3 py-1 text-white rounded"
+          >
+            Update
+          </button>
 
-        <button
-          onClick={() => setDeleting(c)}
-          className="border border-red-400 px-3 py-1 text-red-500"
-        >
-          Delete
-        </button>
+          <button
+            onClick={() => setDeleting(c)}
+            className="border border-red-400 px-3 py-1 text-red-500"
+          >
+            Delete
+          </button>
+        </div>
       </td>
     </tr>
   );
