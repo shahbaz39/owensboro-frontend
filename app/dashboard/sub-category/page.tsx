@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   collection,
   getDocs,
@@ -9,7 +9,13 @@ import {
   addDoc,
   updateDoc,
 } from "firebase/firestore";
-import { db } from "@/lib/firebaseServices";
+import {
+  ref,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject,
+} from "firebase/storage";
+import { db, storage } from "@/lib/firebaseServices";
 
 /* TYPES */
 type SubCategory = {
@@ -18,6 +24,7 @@ type SubCategory = {
   category: string;
   categoryId: string;
   order?: number;
+  image?: string;
 };
 
 type Category = {
@@ -35,6 +42,7 @@ export default function Page() {
   const [dragged, setDragged] = useState<SubCategory | null>(null);
 
   const [btnLoading, setBtnLoading] = useState(false);
+  const [formError, setFormError] = useState("");
 
   const [form, setForm] = useState({
     name: "",
@@ -42,67 +50,182 @@ export default function Page() {
     order: "",
   });
 
+  const [file, setFile] = useState<File | null>(null);
+
   const [page, setPage] = useState(1);
   const perPage = 12;
 
   /* FETCH */
-  useEffect(() => {
-    const fetchData = async () => {
-      const catSnap = await getDocs(collection(db, "Catagories"));
-      const subSnap = await getDocs(collection(db, "SubCatagories"));
+  const fetchData = async () => {
+    const catSnap = await getDocs(collection(db, "Catagories"));
+    const subSnap = await getDocs(collection(db, "SubCatagories"));
 
-      const cats = catSnap.docs.map((d) => ({
+    const cats = catSnap.docs.map((d) => ({
+      id: d.id,
+      name: d.data().catagoryName,
+    }));
+
+    const subs = subSnap.docs.map((d) => {
+      const data = d.data();
+      const refId = data.catagoriesRef?.id;
+      const cat = cats.find((c) => c.id === refId);
+
+      return {
         id: d.id,
-        name: d.data().catagoryName,
-      }));
+        name: data.name || "Untitled",
+        category: cat?.name || "",
+        categoryId: refId,
+        order: data.order ?? 999,
+        image: data.image || "",
+      };
+    });
 
-      const subs = subSnap.docs.map((d) => {
-        const data = d.data();
-        const refId = data.catagoriesRef?.id;
-        const cat = cats.find((c) => c.id === refId);
+    setCategories(cats);
+    setSubCategories(subs.sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
+    setLoading(false);
+  };
 
-        return {
-          id: d.id,
-          name: data.name || "Untitled",
-          category: cat?.name || "",
-          categoryId: refId,
-          order: data.order ?? 999,
-        };
-      });
-
-      setCategories(cats);
-      setSubCategories(subs.sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
-      setLoading(false);
-    };
-
+  useEffect(() => {
     fetchData();
   }, []);
 
-  /* SHIFT LOGIC */
-  const shiftOrders = (list: SubCategory[], newOrder: number, ignoreId?: string) => {
-    const updated = list
-      .filter((item) => item.id !== ignoreId)
-      .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+  /* HELPERS */
+  const previewUrl = useMemo(() => {
+    if (file) {
+      return URL.createObjectURL(file);
+    }
+    if (editing?.image) {
+      return editing.image;
+    }
+    return "";
+  }, [file, editing]);
 
-    const result: SubCategory[] = [];
-    let inserted = false;
-
-    for (let i = 0; i < updated.length; i++) {
-      if (!inserted && i + 1 === newOrder) {
-        inserted = true;
-        result.push({ ...updated[i], order: i + 2 });
-      } else {
-        result.push({ ...updated[i], order: inserted ? i + 2 : i + 1 });
+  useEffect(() => {
+    return () => {
+      if (file && previewUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(previewUrl);
       }
+    };
+  }, [file, previewUrl]);
+
+  const normalizeOrders = (items: SubCategory[]) =>
+    [...items]
+      .sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
+      .map((item, index) => ({
+        ...item,
+        order: index + 1,
+      }));
+
+  const insertSubCategoryAtOrder = (
+    currentSubCategories: SubCategory[],
+    item: SubCategory,
+    targetOrder: number,
+  ) => {
+    const withoutItem = currentSubCategories.filter((s) => s.id !== item.id);
+    const normalized = normalizeOrders(withoutItem);
+
+    const insertIndex = Math.min(
+      Math.max(targetOrder - 1, 0),
+      normalized.length,
+    );
+
+    normalized.splice(insertIndex, 0, {
+      ...item,
+      order: targetOrder,
+    });
+
+    return normalized.map((entry, index) => ({
+      ...entry,
+      order: index + 1,
+    }));
+  };
+
+  const validateAddOrder = (order: number) => {
+    if (!Number.isInteger(order) || order < 1) {
+      return "Display order must be a positive whole number.";
     }
 
-    return result;
+    if (order > subCategories.length + 1) {
+      return `Display order must be between 1 and ${subCategories.length + 1}.`;
+    }
+
+    const existing = subCategories.find((item) => item.order === order);
+    if (existing) {
+      return `Display order ${order} is already assigned to "${existing.name}". Please choose a different order number.`;
+    }
+
+    return "";
+  };
+
+  const validateUpdateOrder = (order: number) => {
+    if (!Number.isInteger(order) || order < 1) {
+      return "Display order must be a positive whole number.";
+    }
+
+    if (order > subCategories.length) {
+      return `Display order must be between 1 and ${subCategories.length}.`;
+    }
+
+    return "";
+  };
+
+  const validateForm = (isAdding: boolean) => {
+    if (!form.name.trim()) return "Sub category name is required.";
+    if (!form.categoryId) return "Please select a category.";
+    if (!form.order) return "Display order is required.";
+
+    const orderNum = Number(form.order);
+
+    const orderError = isAdding
+      ? validateAddOrder(orderNum)
+      : validateUpdateOrder(orderNum);
+
+    if (orderError) return orderError;
+
+    if (isAdding && !file) {
+      return "Please upload an image for the sub category.";
+    }
+
+    return "";
+  };
+
+  const uploadImage = async () => {
+    if (!file) return editing?.image || "";
+
+    const storageRef = ref(storage, `subcategory/${Date.now()}-${file.name}`);
+    await uploadBytes(storageRef, file);
+    return await getDownloadURL(storageRef);
+  };
+
+  const safelyDeleteImageByUrl = async (url?: string) => {
+    if (!url) return;
+    try {
+      const decoded = decodeURIComponent(url);
+      const path = decoded.split("/o/")[1]?.split("?")[0];
+      if (!path) return;
+      await deleteObject(ref(storage, path));
+    } catch (error) {
+      console.error("Image delete skipped/failed:", error);
+    }
+  };
+
+  const resetFormState = () => {
+    setForm({ name: "", categoryId: "", order: "" });
+    setFile(null);
+    setFormError("");
+  };
+
+  const closeModal = () => {
+    setAdding(false);
+    setEditing(null);
+    resetFormState();
   };
 
   /* ADD */
   const handleAdd = async () => {
-    if (!form.name || !form.categoryId || !form.order) {
-      alert("All fields are required");
+    const validationError = validateForm(true);
+    if (validationError) {
+      setFormError(validationError);
       return;
     }
 
@@ -111,42 +234,50 @@ export default function Page() {
     setBtnLoading(true);
 
     try {
-      const ref = doc(db, "Catagories", form.categoryId);
+      setFormError("");
 
-      const shifted = shiftOrders(subCategories, orderNum);
+      const categoryRef = doc(db, "Catagories", form.categoryId);
+      const imageUrl = await uploadImage();
 
-      const docRef = await addDoc(collection(db, "SubCatagories"), {
+      const newDocRef = await addDoc(collection(db, "SubCatagories"), {
         name: form.name,
-        catagoriesRef: ref,
+        catagoriesRef: categoryRef,
         createdAt: new Date(),
         order: orderNum,
+        image: imageUrl,
       });
 
       const cat = categories.find((c) => c.id === form.categoryId);
 
-      const finalList = [
-        ...shifted,
-        {
-          id: docRef.id,
-          name: form.name,
-          category: cat?.name || "",
-          categoryId: form.categoryId,
-          order: orderNum,
-        },
-      ].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+      const newItem: SubCategory = {
+        id: newDocRef.id,
+        name: form.name,
+        category: cat?.name || "",
+        categoryId: form.categoryId,
+        order: orderNum,
+        image: imageUrl,
+      };
 
-      setSubCategories(finalList);
-
-      await Promise.all(
-        finalList.map((it) =>
-          updateDoc(doc(db, "SubCatagories", it.id), {
-            order: it.order,
-          })
-        )
+      const reordered = insertSubCategoryAtOrder(
+        subCategories,
+        newItem,
+        orderNum,
       );
 
-      setAdding(false);
-      setForm({ name: "", categoryId: "", order: "" });
+      setSubCategories(reordered);
+
+      await Promise.all(
+        reordered.map((item) =>
+          updateDoc(doc(db, "SubCatagories", item.id), {
+            order: item.order,
+          }),
+        ),
+      );
+
+      closeModal();
+    } catch (error) {
+      console.error(error);
+      setFormError("Unable to create the sub category right now. Please try again.");
     } finally {
       setBtnLoading(false);
     }
@@ -156,45 +287,65 @@ export default function Page() {
   const handleUpdate = async () => {
     if (!editing) return;
 
+    const validationError = validateForm(false);
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
+
     const orderNum = Number(form.order);
 
     setBtnLoading(true);
 
     try {
-      const ref = doc(db, "Catagories", form.categoryId);
+      setFormError("");
 
-      const shifted = shiftOrders(subCategories, orderNum, editing.id);
-
+      const categoryRef = doc(db, "Catagories", form.categoryId);
+      const imageUrl = await uploadImage();
       const cat = categories.find((c) => c.id === form.categoryId);
 
-      const updatedItem = {
+      const updatedItem: SubCategory = {
         ...editing,
         name: form.name,
         category: cat?.name || "",
         categoryId: form.categoryId,
         order: orderNum,
+        image: imageUrl,
       };
 
-      const finalList = [...shifted, updatedItem].sort(
-        (a, b) => (a.order ?? 999) - (b.order ?? 999)
+      const reordered = insertSubCategoryAtOrder(
+        subCategories,
+        updatedItem,
+        orderNum,
       );
 
-      setSubCategories(finalList);
+      setSubCategories(reordered);
 
-      await Promise.all([
-        updateDoc(doc(db, "SubCatagories", editing.id), {
-          name: form.name,
-          catagoriesRef: ref,
-          order: orderNum,
-        }),
-        ...shifted.map((it) =>
-          updateDoc(doc(db, "SubCatagories", it.id), {
-            order: it.order,
-          })
-        ),
-      ]);
+      await Promise.all(
+        reordered
+          .filter((item) => item.id !== editing.id)
+          .map((item) =>
+            updateDoc(doc(db, "SubCatagories", item.id), {
+              order: item.order,
+            }),
+          ),
+      );
 
-      setEditing(null);
+      if (editing.image && file && editing.image !== imageUrl) {
+        await safelyDeleteImageByUrl(editing.image);
+      }
+
+      await updateDoc(doc(db, "SubCatagories", editing.id), {
+        name: form.name,
+        catagoriesRef: categoryRef,
+        order: orderNum,
+        image: imageUrl,
+      });
+
+      closeModal();
+    } catch (error) {
+      console.error(error);
+      setFormError("Unable to update the sub category right now. Please try again.");
     } finally {
       setBtnLoading(false);
     }
@@ -202,15 +353,37 @@ export default function Page() {
 
   /* DELETE */
   const handleDelete = async (id: string) => {
+    const itemToDelete = subCategories.find((item) => item.id === id);
+    if (!itemToDelete) return;
+
     if (!confirm("Delete this sub category?")) return;
 
     await deleteDoc(doc(db, "SubCatagories", id));
-    setSubCategories((prev) => prev.filter((i) => i.id !== id));
+
+    if (itemToDelete.image) {
+      await safelyDeleteImageByUrl(itemToDelete.image);
+    }
+
+    const remaining = subCategories.filter((item) => item.id !== id);
+    const reordered = remaining.map((item, index) => ({
+      ...item,
+      order: index + 1,
+    }));
+
+    setSubCategories(reordered);
+
+    await Promise.all(
+      reordered.map((item) =>
+        updateDoc(doc(db, "SubCatagories", item.id), {
+          order: item.order,
+        }),
+      ),
+    );
   };
 
   const paginatedData = subCategories.slice(
     (page - 1) * perPage,
-    page * perPage
+    page * perPage,
   );
 
   return (
@@ -219,7 +392,11 @@ export default function Page() {
         <h1 className="text-4xl font-bold text-[#ff7a59]">Sub Categories</h1>
 
         <button
-          onClick={() => setAdding(true)}
+          onClick={() => {
+            setAdding(true);
+            setEditing(null);
+            resetFormState();
+          }}
           className="inline-flex h-11 items-center justify-center rounded-xl border border-[#ff7a59] px-5 text-sm font-semibold text-[#ff7a59] hover:bg-[#ff7a59] hover:text-white"
         >
           Add Sub Category
@@ -235,6 +412,7 @@ export default function Page() {
               <table className="w-full text-left">
                 <thead className="bg-[#ece2cb] text-black">
                   <tr>
+                    <th className="p-3">Image</th>
                     <th className="p-3">Name</th>
                     <th className="p-3">Category</th>
                     <th className="p-3">Order</th>
@@ -270,12 +448,26 @@ export default function Page() {
                           reordered.map((it) =>
                             updateDoc(doc(db, "SubCatagories", it.id), {
                               order: it.order,
-                            })
-                          )
+                            }),
+                          ),
                         );
                       }}
                       className="border-b border-white/10 bg-[#ece2cb] text-black hover:bg-[#f5ecd7]"
                     >
+                      <td className="p-3">
+                        {item.image ? (
+                          <img
+                            src={item.image}
+                            alt={item.name}
+                            className="h-12 w-12 rounded-lg object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-black/10 bg-black/5 text-[10px] text-black/35">
+                            No Img
+                          </div>
+                        )}
+                      </td>
+
                       <td className="p-3 font-semibold">{item.name}</td>
                       <td className="p-3 text-black/60">{item.category}</td>
                       <td className="p-3">{item.order}</td>
@@ -285,6 +477,9 @@ export default function Page() {
                           <button
                             onClick={() => {
                               setEditing(item);
+                              setAdding(false);
+                              setFile(null);
+                              setFormError("");
                               setForm({
                                 name: item.name,
                                 categoryId: item.categoryId,
@@ -310,7 +505,6 @@ export default function Page() {
               </table>
             </div>
 
-            {/* PAGINATION RESTORED */}
             <Pagination total={subCategories.length} page={page} setPage={setPage} />
           </>
         )}
@@ -319,24 +513,25 @@ export default function Page() {
       {(adding || editing) && (
         <Modal
           title={adding ? "Add Sub Category" : "Update Sub Category"}
-          onClose={() => {
-            setAdding(false);
-            setEditing(null);
-          }}
+          onClose={closeModal}
         >
           <Input
             label="Sub Category Name"
             value={form.name}
-            onChange={(v: string) => setForm({ ...form, name: v })}
+            onChange={(v: string) => {
+              setForm({ ...form, name: v });
+              setFormError("");
+            }}
           />
 
           <div className="mt-3">
             <label className="text-black font-semibold">Category</label>
             <select
               value={form.categoryId}
-              onChange={(e) =>
-                setForm({ ...form, categoryId: e.target.value })
-              }
+              onChange={(e) => {
+                setForm({ ...form, categoryId: e.target.value });
+                setFormError("");
+              }}
               className="mt-1 w-full rounded-xl border border-[#ff7a59] bg-white px-4 py-3 text-black"
             >
               <option value="">Select Category</option>
@@ -351,13 +546,67 @@ export default function Page() {
           <Input
             label="Order"
             value={form.order}
-            onChange={(v: string) => setForm({ ...form, order: v })}
+            onChange={(v: string) => {
+              setForm({ ...form, order: v });
+              setFormError("");
+            }}
           />
+
+          {editing && !formError && (
+            <p className="mt-2 text-sm text-[#5f5542]">
+              Changing the display order will automatically shift the other sub categories.
+            </p>
+          )}
+
+          <div className="mt-4">
+            <label className="text-black font-semibold">Image</label>
+
+            <div className="mt-2 rounded-xl border border-[#ff7a59] bg-white p-3">
+              <div className="flex items-center gap-4">
+                <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-lg border border-[#ff7a59]/30 bg-[#f7f1e4]">
+                  {previewUrl ? (
+                    <img
+                      src={previewUrl}
+                      alt="Preview"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-[10px] text-black/40">No image</span>
+                  )}
+                </div>
+
+                <div className="flex-1">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      setFile(e.target.files?.[0] || null);
+                      setFormError("");
+                    }}
+                    className="w-full text-sm text-black"
+                  />
+                  <p className="mt-2 text-xs text-black/50">
+                    {file
+                      ? file.name
+                      : editing?.image
+                        ? "Current image will stay unless you choose a new one."
+                        : "Upload an image for this sub category."}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {formError && (
+            <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {formError}
+            </div>
+          )}
 
           <button
             onClick={adding ? handleAdd : handleUpdate}
             disabled={btnLoading}
-            className="mt-6 w-full bg-[#ff7a59] text-white py-3 rounded-xl flex items-center justify-center"
+            className="mt-6 w-full rounded-xl bg-[#ff7a59] py-3 text-white flex items-center justify-center"
           >
             {btnLoading ? (
               <span className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" />

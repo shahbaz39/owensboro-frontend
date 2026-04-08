@@ -22,29 +22,35 @@ export default function Page() {
   const perPage = 9;
 
   /* FETCH */
-  useEffect(() => {
-    const fetchUsers = async () => {
-      const snap = await getDocs(collection(db, "Users"));
+useEffect(() => {
+  const fetchUsers = async () => {
+    const snap = await getDocs(collection(db, "Users"));
 
-      const data = snap.docs.map((d) => {
-        const x = d.data();
+    const data = snap.docs.map((d) => {
+      const x = d.data();
 
-        return {
-          id: d.id,
-          name: x.full_name || x.display_name || "No Name",
-          email: x.email || "",
-          phone: x.phone_number || "",
-          uid: x.uid || "",
-          createdAt: x.created_time || null,
-        };
-      });
+      return {
+        id: d.id,
+        name: x.full_name || x.display_name || "No Name",
+        email: x.email || "",
+        phone: x.phone_number || "",
+        uid: x.uid || "",
+        createdAt: x.created_time || null,
+      };
+    });
 
-      setUsers(data);
-      setLoading(false);
-    };
+    data.sort((a, b) => {
+      const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+      const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+      return bTime - aTime;
+    });
 
-    fetchUsers();
-  }, []);
+    setUsers(data);
+    setLoading(false);
+  };
+
+  fetchUsers();
+}, []);
 
   /* EXPORT CSV */
   const exportCSV = () => {
