@@ -40,6 +40,7 @@ export default function Page() {
 
   const [form, setForm] = useState({ name: "", slug: "", order: "" });
   const [file, setFile] = useState<File | null>(null);
+  const [formError, setFormError] = useState("");
 
   const [saving, setSaving] = useState(false);
 
@@ -150,23 +151,83 @@ export default function Page() {
     }));
   };
 
+  const resetFormState = () => {
+    setForm({ name: "", slug: "", order: "" });
+    setFile(null);
+    setFormError("");
+  };
+
   const closeModal = () => {
     setAdding(false);
     setEditing(null);
-    setForm({ name: "", slug: "", order: "" });
+    resetFormState();
+  };
+
+  const openAddModal = () => {
+    setEditing(null);
+    setAdding(true);
+    resetFormState();
+  };
+
+  const openEditModal = (category: Category) => {
+    setAdding(false);
+    setEditing(category);
+    setForm({
+      name: category.name,
+      slug: category.slug,
+      order: category.order ? String(category.order) : "",
+    });
     setFile(null);
+    setFormError("");
+  };
+
+  const validateAddOrder = (order: number) => {
+    if (!Number.isInteger(order) || order < 1) {
+      return "Display order must be a positive whole number.";
+    }
+
+    if (order > categories.length + 1) {
+      return `Display order must be between 1 and ${categories.length + 1}.`;
+    }
+
+    const existingCategory = categories.find((category) => category.order === order);
+
+    if (existingCategory) {
+      return `Display order ${order} already exists for "${existingCategory.name}". Please choose a different order number.`;
+    }
+
+    return "";
+  };
+
+  const validateUpdateOrder = (order: number) => {
+    if (!Number.isInteger(order) || order < 1) {
+      return "Display order must be a positive whole number.";
+    }
+
+    if (order > categories.length) {
+      return `Display order must be between 1 and ${categories.length}.`;
+    }
+
+    return "";
   };
 
   /* ADD */
   const handleAdd = async () => {
+    const desiredOrder =
+      form.order !== "" ? Number(form.order) : categories.length + 1;
+
+    const validationMessage = validateAddOrder(desiredOrder);
+    if (validationMessage) {
+      setFormError(validationMessage);
+      return;
+    }
+
     try {
+      setFormError("");
       setSaving(true);
 
       const imageUrl = await uploadImage();
       const newDocRef = doc(collection(db, "Catagories"));
-
-      const desiredOrder =
-        form.order !== "" ? Number(form.order) : categories.length + 1;
 
       const newCategory: Category = {
         id: newDocRef.id,
@@ -197,6 +258,7 @@ export default function Page() {
       );
 
       await setDoc(newDocRef, {
+        id: newDocRef.id,
         catagoryName: form.name,
         slug: form.slug,
         image: imageUrl,
@@ -207,6 +269,7 @@ export default function Page() {
       closeModal();
     } catch (error) {
       console.error(error);
+      setFormError("Unable to save the category right now. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -216,7 +279,17 @@ export default function Page() {
   const handleUpdate = async () => {
     if (!editing) return;
 
+    const desiredOrder =
+      form.order !== "" ? Number(form.order) : (editing.order ?? 999);
+
+    const validationMessage = validateUpdateOrder(desiredOrder);
+    if (validationMessage) {
+      setFormError(validationMessage);
+      return;
+    }
+
     try {
+      setFormError("");
       setSaving(true);
 
       let imageUrl = editing.image;
@@ -228,9 +301,6 @@ export default function Page() {
         imageUrl = await uploadImage();
       }
 
-      const desiredOrder =
-        form.order !== "" ? Number(form.order) : (editing.order ?? 999);
-
       const updatedCategory: Category = {
         ...editing,
         name: form.name,
@@ -239,12 +309,8 @@ export default function Page() {
         order: desiredOrder,
       };
 
-      const updatedCategories = categories.map((item) =>
-        item.id === editing.id ? updatedCategory : item,
-      );
-
       const reordered = insertCategoryAtOrder(
-        updatedCategories,
+        categories,
         updatedCategory,
         desiredOrder,
       );
@@ -274,6 +340,7 @@ export default function Page() {
       closeModal();
     } catch (error) {
       console.error(error);
+      setFormError("Unable to update the category right now. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -348,19 +415,17 @@ export default function Page() {
 
   return (
     <div className="px-6 pt-6 pb-10">
-      {/* HEADER */}
       <div className="flex justify-between mb-8">
         <h1 className="text-4xl font-bold text-[#ff7a59]">Categories</h1>
 
         <button
-          onClick={() => setAdding(true)}
+          onClick={openAddModal}
           className="border border-[#ff7a59] px-5 py-2 rounded-xl text-[#ff7a59]"
         >
           Add Category
         </button>
       </div>
 
-      {/* TABLE */}
       <div className="overflow-x-auto rounded-2xl border border-white/10">
         <table className="w-full text-left">
           <thead className="bg-[#ece2cb] text-black">
@@ -369,7 +434,7 @@ export default function Page() {
               <th className="p-3">Name</th>
               <th className="p-3">Slug</th>
               <th className="p-3">Order</th>
-              <th className="p-3 text-right">Actions</th>
+              <th className="p-3 text-right min-w-[170px]">Actions</th>
             </tr>
           </thead>
 
@@ -380,14 +445,7 @@ export default function Page() {
                 c={c}
                 setDragged={setDragged}
                 handleDrop={handleDrop}
-                setEditing={(cat: Category) => {
-                  setEditing(cat);
-                  setForm({
-                    name: cat.name,
-                    slug: cat.slug,
-                    order: cat.order ? String(cat.order) : "",
-                  });
-                }}
+                setEditing={openEditModal}
                 setDeleting={setDeleting}
               />
             ))}
@@ -395,7 +453,6 @@ export default function Page() {
         </table>
       </div>
 
-      {/* 🔥 PAGINATION */}
       {totalPages > 1 && (
         <div className="mt-8 flex flex-col md:flex-row items-center justify-between gap-4 text-[#f3ead7]">
           <p className="text-sm text-[#f3ead7]/70">
@@ -415,8 +472,9 @@ export default function Page() {
             {Array.from({ length: totalPages }).map((_, i) => {
               const p = i + 1;
 
-              if (p !== 1 && p !== totalPages && Math.abs(p - page) > 1)
+              if (p !== 1 && p !== totalPages && Math.abs(p - page) > 1) {
                 return null;
+              }
 
               return (
                 <button
@@ -445,28 +503,52 @@ export default function Page() {
       )}
 
       {(adding || editing) && (
-        <Modal title="Category" onClose={closeModal}>
+        <Modal title={adding ? "Add Category" : "Update Category"} onClose={closeModal}>
           <Input
             label="Name"
             value={form.name}
-            onChange={(v: string) => setForm({ ...form, name: v })}
+            onChange={(v: string) => {
+              setForm({ ...form, name: v });
+              setFormError("");
+            }}
           />
           <Input
             label="Slug"
             value={form.slug}
-            onChange={(v: string) => setForm({ ...form, slug: v })}
+            onChange={(v: string) => {
+              setForm({ ...form, slug: v });
+              setFormError("");
+            }}
           />
           <Input
             label="Order"
             value={form.order}
-            onChange={(v: string) => setForm({ ...form, order: v })}
+            onChange={(v: string) => {
+              setForm({ ...form, order: v });
+              setFormError("");
+            }}
           />
+
+          {editing && !formError && (
+            <p className="mt-2 text-sm text-[#5f5542]">
+              Changing the display order will automatically shift the other categories.
+            </p>
+          )}
 
           <input
             type="file"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            onChange={(e) => {
+              setFile(e.target.files?.[0] || null);
+              setFormError("");
+            }}
             className="mt-4"
           />
+
+          {formError && (
+            <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {formError}
+            </div>
+          )}
 
           <button
             onClick={adding ? handleAdd : handleUpdate}
@@ -476,7 +558,7 @@ export default function Page() {
             {saving && (
               <span className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
             )}
-            {saving ? "Saving..." : "Save"}
+            {saving ? "Saving..." : adding ? "Save Category" : "Update Category"}
           </button>
         </Modal>
       )}
@@ -514,6 +596,7 @@ const CategoryRow = React.memo(function CategoryRow({
       <td className="p-3">
         <img
           src={imageCache.get(c.image) || c.image}
+          alt={c.name}
           className="h-12 w-12 rounded-lg object-cover"
         />
       </td>
@@ -522,7 +605,7 @@ const CategoryRow = React.memo(function CategoryRow({
       <td className="p-3">{c.slug}</td>
       <td className="p-3">{c.order}</td>
 
-      <td className="p-3">
+      <td className="p-3 min-w-[170px]">
         <div className="flex justify-end items-center gap-2 whitespace-nowrap">
           <button
             onClick={() => setEditing(c)}
