@@ -20,6 +20,14 @@ import {
 } from "firebase/storage";
 import { db, storage } from "@/lib/firebaseServices";
 
+type NotificationStatus =
+  | "draft"
+  | "queued"
+  | "sending"
+  | "sent"
+  | "partial"
+  | "failed";
+
 type NotificationItem = {
   id: string;
   title: string;
@@ -29,6 +37,9 @@ type NotificationItem = {
   sentCount?: number;
   failedCount?: number;
   createdAt?: any;
+  sentAt?: any;
+  status?: NotificationStatus;
+  errorMessage?: string;
 };
 
 type FormState = {
@@ -47,6 +58,7 @@ export default function Page() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [sendingId, setSendingId] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const [adding, setAdding] = useState(false);
@@ -65,41 +77,44 @@ export default function Page() {
   const [page, setPage] = useState(1);
   const perPage = 9;
 
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const q = query(
+        collection(db, "notifications"),
+        orderBy("createdAt", "desc"),
+      );
+      const snap = await getDocs(q);
+
+      const data: NotificationItem[] = snap.docs.map((d) => {
+        const x = d.data();
+        return {
+          id: d.id,
+          title: x.title || "",
+          body: x.body || "",
+          image: x.image || "",
+          sent: x.sent || false,
+          sentCount: x.sentCount || 0,
+          failedCount: x.failedCount || 0,
+          createdAt: x.createdAt || null,
+          sentAt: x.sentAt || null,
+          status: (x.status || "draft") as NotificationStatus,
+          errorMessage: x.errorMessage || "",
+        };
+      });
+
+      setNotifications(data);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to load notifications.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        setError("");
-
-        const q = query(
-          collection(db, "notifications"),
-          orderBy("createdAt", "desc")
-        );
-        const snap = await getDocs(q);
-
-        const data: NotificationItem[] = snap.docs.map((d) => {
-          const x = d.data();
-          return {
-            id: d.id,
-            title: x.title || "",
-            body: x.body || "",
-            image: x.image || "",
-            sent: x.sent || false,
-            sentCount: x.sentCount || 0,
-            failedCount: x.failedCount || 0,
-            createdAt: x.createdAt || null,
-          };
-        });
-
-        setNotifications(data);
-      } catch (err) {
-        console.error(err);
-        setError("Failed to load notifications.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchData();
   }, []);
 
@@ -123,10 +138,7 @@ export default function Page() {
 
   const uploadImage = async () => {
     if (!file) return "";
-    const storageRef = ref(
-      storage,
-      `notifications/${Date.now()}-${file.name}`
-    );
+    const storageRef = ref(storage, `notifications/${Date.now()}-${file.name}`);
     await uploadBytes(storageRef, file);
     return await getDownloadURL(storageRef);
   };
@@ -179,14 +191,14 @@ export default function Page() {
 
   const toggleSelectOne = (id: string) => {
     setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((itemId) => itemId !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter((itemId) => itemId !== id) : [...prev, id],
     );
   };
 
   const toggleSelectCurrentPage = () => {
     if (isAllCurrentPageSelected) {
       setSelectedIds((prev) =>
-        prev.filter((id) => !paginatedData.some((item) => item.id === id))
+        prev.filter((id) => !paginatedData.some((item) => item.id === id)),
       );
       return;
     }
@@ -200,6 +212,53 @@ export default function Page() {
 
   const clearSelection = () => {
     setSelectedIds([]);
+  };
+
+  const sendNotificationNow = async (notificationId: string) => {
+    setSendingId(notificationId);
+    setError("");
+
+    try {
+      const response = await fetch("/api/admin/notifications/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          notificationId,
+        }),
+      });
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(result?.message || "Failed to send notification.");
+      }
+
+      setNotifications((prev) =>
+        prev.map((n) =>
+          n.id === notificationId
+            ? {
+                ...n,
+                sent: !!result?.sent,
+                sentCount: result?.sentCount ?? n.sentCount ?? 0,
+                failedCount: result?.failedCount ?? n.failedCount ?? 0,
+                status: result?.status ?? "sent",
+                errorMessage: result?.errorMessage ?? "",
+                sentAt: result?.sentAt ?? new Date(),
+              }
+            : n,
+        ),
+      );
+
+      await fetchData();
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.message || "Failed to send notification.");
+      await fetchData();
+    } finally {
+      setSendingId(null);
+    }
   };
 
   const handleAdd = async () => {
@@ -223,6 +282,9 @@ export default function Page() {
         sent: false,
         sentCount: 0,
         failedCount: 0,
+        status: "queued",
+        errorMessage: "",
+        sentAt: null,
       });
 
       setNotifications((prev) => [
@@ -235,12 +297,17 @@ export default function Page() {
           sentCount: 0,
           failedCount: 0,
           createdAt: new Date(),
+          status: "queued",
+          errorMessage: "",
+          sentAt: null,
         },
         ...prev,
       ]);
 
       setPage(1);
       closeModal();
+
+      await sendNotificationNow(docRef.id);
     } catch (err) {
       console.error(err);
       setError("Failed to create notification.");
@@ -277,6 +344,12 @@ export default function Page() {
         title: form.title,
         body: form.body,
         image: nextImageUrl,
+        sent: false,
+        sentCount: 0,
+        failedCount: 0,
+        status: "draft",
+        errorMessage: "",
+        sentAt: null,
       });
 
       setNotifications((prev) =>
@@ -287,9 +360,15 @@ export default function Page() {
                 title: form.title,
                 body: form.body,
                 image: nextImageUrl,
+                sent: false,
+                sentCount: 0,
+                failedCount: 0,
+                status: "draft",
+                errorMessage: "",
+                sentAt: null,
               }
-            : n
-        )
+            : n,
+        ),
       );
 
       closeModal();
@@ -340,7 +419,7 @@ export default function Page() {
         itemsToDelete.map(async (item) => {
           await deleteDoc(doc(db, "notifications", item.id));
           await safelyDeleteImageByUrl(item.image);
-        })
+        }),
       );
 
       const remaining =
@@ -361,7 +440,7 @@ export default function Page() {
       setError(
         bulkDeleteMode === "all"
           ? "Failed to delete all notifications."
-          : "Failed to delete selected notifications."
+          : "Failed to delete selected notifications.",
       );
       setBulkDeleteMode(null);
     } finally {
@@ -375,6 +454,25 @@ export default function Page() {
       ? editing.image || ""
       : "";
 
+  const getStatusBadge = (item: NotificationItem) => {
+    const status = item.status || (item.sent ? "sent" : "draft");
+
+    switch (status) {
+      case "sent":
+        return "bg-green-100 text-green-700";
+      case "partial":
+        return "bg-orange-100 text-orange-700";
+      case "failed":
+        return "bg-red-100 text-red-700";
+      case "sending":
+        return "bg-blue-100 text-blue-700";
+      case "queued":
+        return "bg-purple-100 text-purple-700";
+      default:
+        return "bg-yellow-100 text-yellow-700";
+    }
+  };
+
   return (
     <div className="px-4 pt-6 pb-10 md:px-8">
       <div className="mb-8 flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
@@ -383,7 +481,7 @@ export default function Page() {
             Notifications
           </h1>
           <p className="mt-2 text-lg font-medium text-[#e8dcc7] md:text-xl">
-            Create and manage push notifications for app users.
+            Create and manage FCM push notifications for app users.
           </p>
         </div>
 
@@ -483,13 +581,9 @@ export default function Page() {
                     </label>
 
                     <span
-                      className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                        n.sent
-                          ? "bg-green-100 text-green-700"
-                          : "bg-yellow-100 text-yellow-700"
-                      }`}
+                      className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${getStatusBadge(n)}`}
                     >
-                      {n.sent ? "Sent" : "Pending"}
+                      {n.status || (n.sent ? "sent" : "draft")}
                     </span>
                   </div>
 
@@ -517,7 +611,7 @@ export default function Page() {
                     {n.body}
                   </p>
 
-                  <div className="mt-3 flex gap-2 text-xs">
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs">
                     <span className="rounded-full bg-black/5 px-2 py-1">
                       Success: {n.sentCount || 0}
                     </span>
@@ -525,6 +619,12 @@ export default function Page() {
                       Failed: {n.failedCount || 0}
                     </span>
                   </div>
+
+                  {n.errorMessage ? (
+                    <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+                      {n.errorMessage}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="mt-4 flex gap-2">
@@ -549,6 +649,14 @@ export default function Page() {
                     Delete
                   </button>
                 </div>
+
+                <button
+                  onClick={() => sendNotificationNow(n.id)}
+                  disabled={sendingId === n.id}
+                  className="mt-3 inline-flex w-full items-center justify-center rounded-lg bg-black px-3 py-2 text-xs font-semibold text-white transition-all duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                >
+                  {sendingId === n.id ? "Sending..." : "Send Now"}
+                </button>
               </div>
             );
           })}
@@ -668,7 +776,7 @@ export default function Page() {
                 ? "Creating..."
                 : "Saving..."
               : adding
-                ? "Create & Send"
+                ? "Create & Send FCM"
                 : "Save Changes"}
           </button>
         </Modal>
@@ -697,7 +805,10 @@ export default function Page() {
               </div>
             </div>
 
-            <div className="flex gap-3 text-sm">
+            <div className="flex flex-wrap gap-3 text-sm">
+              <span className="rounded-full bg-black/5 px-3 py-1">
+                Status: {selected.status || (selected.sent ? "sent" : "draft")}
+              </span>
               <span className="rounded-full bg-black/5 px-3 py-1">
                 Sent: {selected.sent ? "Yes" : "No"}
               </span>
@@ -708,6 +819,12 @@ export default function Page() {
                 Failed: {selected.failedCount || 0}
               </span>
             </div>
+
+            {selected.errorMessage ? (
+              <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-600">
+                {selected.errorMessage}
+              </div>
+            ) : null}
           </div>
         </Modal>
       )}
