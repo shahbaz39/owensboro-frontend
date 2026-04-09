@@ -97,9 +97,7 @@ export default function Page() {
 
   /* FILTER PRODUCTS */
   const filteredProducts = useMemo(() => {
-    return products.filter(
-      (p) => p.subCategoryId === form.subCategoryId
-    );
+    return products.filter((p) => p.subCategoryId === form.subCategoryId);
   }, [products, form.subCategoryId]);
 
   /* PREFILL EDIT */
@@ -160,8 +158,7 @@ export default function Page() {
         productId: form.productId,
         subCategory:
           subCategories.find((s) => s.id === form.subCategoryId)?.name || "",
-        product:
-          products.find((p) => p.id === form.productId)?.name || "",
+        product: products.find((p) => p.id === form.productId)?.name || "",
         image: imageUrl,
       },
       ...prev,
@@ -202,8 +199,8 @@ export default function Page() {
               ...form,
               image: imageUrl,
             }
-          : b
-      )
+          : b,
+      ),
     );
 
     closeModal();
@@ -231,7 +228,6 @@ export default function Page() {
 
   return (
     <div className="px-4 pt-6 pb-10 md:px-8">
-
       {/* HEADER */}
       <div className="flex justify-between mb-8">
         <h1 className="text-4xl font-bold text-[#ff7a59]">Banner</h1>
@@ -275,7 +271,19 @@ export default function Page() {
                     Update
                   </button>
                   <button
-                    onClick={() => setDeleting(b)}
+                    onClick={async () => {
+                      if (
+                        !confirm("Are you sure you want to delete this banner?")
+                      )
+                        return;
+
+                      await deleteDoc(doc(db, "Banner", b.id));
+                      await deleteImage(b.image);
+
+                      setBanners((prev) =>
+                        prev.filter((item) => item.id !== b.id),
+                      );
+                    }}
                     className="border border-red-400 px-3 py-1 text-red-500"
                   >
                     Delete
@@ -290,34 +298,43 @@ export default function Page() {
       {/* MODAL */}
       {(adding || editing) && (
         <Modal title="Banner" onClose={closeModal}>
+          {error && <div className="text-red-500 text-sm">{error}</div>}
 
-          {error && (
-            <div className="text-red-500 text-sm">{error}</div>
-          )}
+          <Input
+            label="Title"
+            value={form.title}
+            onChange={(v: any) => setForm({ ...form, title: v })}
+          />
 
-          <Input label="Title" value={form.title} onChange={(v:any)=>setForm({...form,title:v})}/>
-
-          <Select value={form.subCategoryId}
-            onChange={(v:any)=>setForm({...form,subCategoryId:v,productId:""})}
+          <Select
+            value={form.subCategoryId}
+            onChange={(v: any) =>
+              setForm({ ...form, subCategoryId: v, productId: "" })
+            }
             options={subCategories}
             placeholder="Select SubCategory"
           />
 
-          <Select value={form.productId}
-            onChange={(v:any)=>setForm({...form,productId:v})}
+          <Select
+            value={form.productId}
+            onChange={(v: any) => setForm({ ...form, productId: v })}
             options={filteredProducts}
             placeholder="Select Listing"
           />
 
           <div className="mt-4 border border-[#ff7a59] rounded-xl p-4">
-            <input type="file" onChange={(e)=>setFile(e.target.files?.[0]||null)}/>
+            <input
+              type="file"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+            />
           </div>
 
-          <button onClick={adding?handleAdd:handleUpdate}
-            className="mt-6 w-full bg-[#ff7a59] text-white py-3 rounded-xl">
-            {loading?"Saving...":"Save"}
+          <button
+            onClick={adding ? handleAdd : handleUpdate}
+            className="mt-6 w-full bg-[#ff7a59] text-white py-3 rounded-xl"
+          >
+            {loading ? "Saving..." : "Save"}
           </button>
-
         </Modal>
       )}
     </div>
@@ -343,19 +360,27 @@ function Input({ label, value, onChange }: any) {
   return (
     <div className="mt-3">
       <label className="font-semibold">{label}</label>
-      <input value={value} onChange={(e)=>onChange(e.target.value)}
-        className="w-full border border-[#ff7a59] rounded-xl p-3 mt-1"/>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full border border-[#ff7a59] rounded-xl p-3 mt-1"
+      />
     </div>
   );
 }
 
 function Select({ value, onChange, options, placeholder }: any) {
   return (
-    <select value={value} onChange={(e)=>onChange(e.target.value)}
-      className="w-full border border-[#ff7a59] rounded-xl p-3 mt-3">
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full border border-[#ff7a59] rounded-xl p-3 mt-3"
+    >
       <option value="">{placeholder}</option>
-      {options.map((o:any)=>(
-        <option key={o.id} value={o.id}>{o.name}</option>
+      {options.map((o: any) => (
+        <option key={o.id} value={o.id}>
+          {o.name}
+        </option>
       ))}
     </select>
   );
