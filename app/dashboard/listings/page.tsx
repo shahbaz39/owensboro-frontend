@@ -126,9 +126,7 @@ export default function Page() {
       const subs: SubCategory[] = subSnap.docs.map((d) => ({
         id: d.id,
         name:
-          d.data().name ||
-          d.data().subCategoryName ||
-          "Untitled Sub Category",
+          d.data().name || d.data().subCategoryName || "Untitled Sub Category",
         categoryId: d.data().catagoriesRef?.id || "",
       }));
 
@@ -243,6 +241,9 @@ export default function Page() {
     if (!form.categoryId) return "Please select a category.";
     if (!form.subCategoryId) return "Please select a sub category.";
     if (!form.title.trim()) return "Title is required.";
+    if (!(file || (editing && editing.image && !removeExistingImage))) {
+      return "Image is required.";
+    }
     if (form.order !== "" && Number(form.order) < 1) {
       return "Order must be greater than 0.";
     }
@@ -355,7 +356,11 @@ export default function Page() {
         order: desiredOrder,
       };
 
-      const reordered = insertListingAtOrder(listings, newListing, desiredOrder);
+      const reordered = insertListingAtOrder(
+        listings,
+        newListing,
+        desiredOrder,
+      );
       const finalOrder =
         reordered.find((entry) => entry.id === newListing.id)?.order ??
         desiredOrder;
