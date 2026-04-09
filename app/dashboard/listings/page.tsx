@@ -241,12 +241,22 @@ export default function Page() {
     if (!form.categoryId) return "Please select a category.";
     if (!form.subCategoryId) return "Please select a sub category.";
     if (!form.title.trim()) return "Title is required.";
-    if (!(file || (editing && editing.image && !removeExistingImage))) {
+
+    // ✅ IMAGE MANDATORY FIX
+    if (adding && !file) {
       return "Image is required.";
     }
+
+    if (editing) {
+      if (removeExistingImage && !file) {
+        return "Image is required.";
+      }
+    }
+
     if (form.order !== "" && Number(form.order) < 1) {
       return "Order must be greater than 0.";
     }
+
     return "";
   };
 
