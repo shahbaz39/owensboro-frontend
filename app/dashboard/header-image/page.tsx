@@ -2,38 +2,69 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  collection,
-  getDocs,
   addDoc,
-  updateDoc,
+  collection,
   deleteDoc,
   doc,
+  getDocs,
+  updateDoc,
 } from "firebase/firestore";
 import {
+  deleteObject,
+  getDownloadURL,
   ref,
   uploadBytes,
-  getDownloadURL,
-  deleteObject,
 } from "firebase/storage";
 
 import { db, storage } from "@/lib/firebaseServices";
 
 /* TYPES */
+type Category = {
+  id: string;
+  name: string;
+};
+
+type SubCategory = {
+  id: string;
+  name: string;
+  categoryId: string;
+};
+
+type Product = {
+  id: string;
+  title: string;
+  subCategoryId: string;
+};
+
 type HeaderImage = {
   id: string;
   title: string;
   image: string;
+  categoryId?: string;
   subCategoryId: string;
   productId: string;
   subCategoryName?: string;
   productName?: string;
+  createdAt?: any;
 };
 
-type SubCategory = { id: string; name: string };
-type Product = { id: string; title: string; subCategoryId: string };
+type FormState = {
+  title: string;
+  categoryId: string;
+  subCategoryId: string;
+  productId: string;
+};
+
+const EMPTY_FORM: FormState = {
+  title: "",
+  categoryId: "",
+  subCategoryId: "",
+  productId: "",
+};
 
 export default function Page() {
   const [items, setItems] = useState<HeaderImage[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [subCategories, setSubCategories] = useState<SubCategory[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
 
@@ -41,202 +72,266 @@ export default function Page() {
   const [editing, setEditing] = useState<HeaderImage | null>(null);
   const [deleting, setDeleting] = useState<HeaderImage | null>(null);
 
-  const [form, setForm] = useState({
-    title: "",
-    subCategoryId: "",
-    productId: "",
-  });
-
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [file, setFile] = useState<File | null>(null);
+
   const [loading, setLoading] = useState(false);
+  const [pageLoading, setPageLoading] = useState(true);
   const [error, setError] = useState("");
 
   /* FETCH */
-  useEffect(() => {
-    const fetchData = async () => {
-      const [headerSnap, subSnap, productSnap] = await Promise.all([
+  const fetchData = async () => {
+    try {
+      setPageLoading(true);
+
+      const [headerSnap, catSnap, subSnap, productSnap] = await Promise.all([
         getDocs(collection(db, "HeaderImages")),
+        getDocs(collection(db, "Catagories")),
         getDocs(collection(db, "SubCatagories")),
         getDocs(collection(db, "Products")),
       ]);
 
-      const subs = subSnap.docs.map((d) => ({
+      const cats: Category[] = catSnap.docs.map((d) => ({
         id: d.id,
-        name: d.data().name,
+        name: d.data().catagoryName || "",
       }));
 
-      const prods = productSnap.docs.map((d) => ({
+      const subs: SubCategory[] = subSnap.docs.map((d) => ({
         id: d.id,
-        title: d.data().productName,
-        subCategoryId: d.data().subCatagoryRef?.id,
+        name: d.data().name || "",
+        categoryId: d.data().catagoriesRef?.id || "",
+      }));
+
+      const prods: Product[] = productSnap.docs.map((d) => ({
+        id: d.id,
+        title: d.data().productName || "",
+        subCategoryId: d.data().subCatagoryRef?.id || "",
       }));
 
       const data: HeaderImage[] = headerSnap.docs.map((d) => {
         const x = d.data();
 
-        const sub = subs.find((s) => s.id === x.subCategoryId);
-        const prod = prods.find((p) => p.id === x.productId);
+        const subId =
+          x.subCategoryId || x.subCategoryRef?.id || "";
+        const productId =
+          x.productId || x.productRef?.id || "";
+
+        const sub = subs.find((s) => s.id === subId);
+        const prod = prods.find((p) => p.id === productId);
 
         return {
           id: d.id,
           title: x.title || "",
           image: x.image || "",
-          subCategoryId: x.subCategoryId || "",
-          productId: x.productId || "",
+          categoryId: sub?.categoryId || "",
+          subCategoryId: subId,
+          productId,
+          createdAt: x.createdAt,
           subCategoryName: sub?.name || "",
           productName: prod?.title || "",
         };
       });
 
-      setItems(data);
+      data.sort(
+        (a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0),
+      );
 
       setItems(data);
+      setCategories(cats);
       setSubCategories(subs);
       setProducts(prods);
-    };
+    } catch (err) {
+      console.error(err);
+      setError("Failed to load header images.");
+    } finally {
+      setPageLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchData();
   }, []);
 
-  /* PREFILL */
+  /* PREFILL FOR EDIT */
   useEffect(() => {
-    if (editing) {
-      setForm({
-        title: editing.title,
-        subCategoryId: editing.subCategoryId,
-        productId: editing.productId,
-      });
-    }
-  }, [editing]);
+    if (!editing) return;
 
-  /* FILTER PRODUCTS */
+    const sub = subCategories.find((s) => s.id === editing.subCategoryId);
+
+    setForm({
+      title: editing.title || "",
+      categoryId: sub?.categoryId || "",
+      subCategoryId: editing.subCategoryId || "",
+      productId: editing.productId || "",
+    });
+  }, [editing, subCategories]);
+
+  /* FILTERS */
+  const filteredSubCategories = useMemo(() => {
+    return subCategories.filter((s) => s.categoryId === form.categoryId);
+  }, [form.categoryId, subCategories]);
+
   const filteredProducts = useMemo(() => {
     return products.filter((p) => p.subCategoryId === form.subCategoryId);
-  }, [products, form.subCategoryId]);
+  }, [form.subCategoryId, products]);
 
   /* VALIDATION */
   const validate = () => {
-    if (!form.title) return "Title is required";
+    if (!form.title.trim()) return "Title is required";
+    if (!form.categoryId) return "Category is required";
     if (!form.subCategoryId) return "SubCategory is required";
     if (!form.productId) return "Listing is required";
     if (adding && !file) return "Image is required";
     return "";
   };
 
-  /* IMAGE */
+  /* HELPERS */
+  const closeModal = () => {
+    setAdding(false);
+    setEditing(null);
+    setFile(null);
+    setError("");
+    setForm(EMPTY_FORM);
+  };
+
   const uploadImage = async () => {
     if (!file) return "";
-    const r = ref(storage, `header/${Date.now()}-${file.name}`);
-    await uploadBytes(r, file);
-    return await getDownloadURL(r);
+    const storageRef = ref(storage, `header/${Date.now()}-${file.name}`);
+    await uploadBytes(storageRef, file);
+    return await getDownloadURL(storageRef);
+  };
+
+  const deleteImageByUrl = async (url?: string) => {
+    if (!url) return;
+
+    try {
+      const decoded = decodeURIComponent(url);
+      const path = decoded.split("/o/")[1]?.split("?")[0];
+      if (path) {
+        await deleteObject(ref(storage, path));
+      }
+    } catch (err) {
+      console.log("Image delete skipped/failed:", err);
+    }
   };
 
   /* ADD */
- const handleAdd = async () => {
-  const err = validate();
-  if (err) return setError(err);
-
-  setLoading(true);
-
-  try {
-    const imageUrl = await uploadImage();
-
-    // 🔥 create references
-    const subRef = doc(db, "SubCatagories", form.subCategoryId);
-    const prodRef = doc(db, "Products", form.productId);
-
-    const docRef = await addDoc(collection(db, "HeaderImages"), {
-      title: form.title,
-      image: imageUrl,
-
-      subCategoryId: form.subCategoryId,
-      productId: form.productId,
-
-      subCategoryRef: subRef,   // ✅ FIX
-      productRef: prodRef,      // ✅ FIX
-
-      createdAt: new Date(),    // ✅ FIX
-    });
-
-    setItems((prev) => [
-      {
-        id: docRef.id,
-        ...form,
-        image: imageUrl,
-        subCategoryName:
-          subCategories.find((s) => s.id === form.subCategoryId)?.name || "",
-        productName:
-          products.find((p) => p.id === form.productId)?.title || "",
-      },
-      ...prev,
-    ]);
-
-    closeModal();
-  } catch (err) {
-    console.error(err);
-  } finally {
-    setLoading(false);
-  }
-};
-
-  /* UPDATE */
-const handleUpdate = async () => {
-  if (!editing) return;
-
-  const err = validate();
-  if (err) return setError(err);
-
-  setLoading(true);
-
-  try {
-    let imageUrl = editing.image;
-
-    if (file) {
-      try {
-        const decoded = decodeURIComponent(editing.image);
-        const path = decoded.split("/o/")[1]?.split("?")[0];
-        if (path) await deleteObject(ref(storage, path));
-      } catch {}
-
-      imageUrl = await uploadImage();
+  const handleAdd = async () => {
+    const validationError = validate();
+    if (validationError) {
+      setError(validationError);
+      return;
     }
 
-    const subRef = doc(db, "SubCatagories", form.subCategoryId);
-    const prodRef = doc(db, "Products", form.productId);
+    try {
+      setLoading(true);
+      setError("");
 
-    await updateDoc(doc(db, "HeaderImages", editing.id), {
-      title: form.title,
-      image: imageUrl,
+      const imageUrl = await uploadImage();
 
-      subCategoryId: form.subCategoryId,
-      productId: form.productId,
+      const subRef = doc(db, "SubCatagories", form.subCategoryId);
+      const prodRef = doc(db, "Products", form.productId);
 
-      subCategoryRef: subRef,  // ✅ FIX
-      productRef: prodRef,     // ✅ FIX
-    });
+      const docRef = await addDoc(collection(db, "HeaderImages"), {
+        title: form.title,
+        image: imageUrl,
+        subCategoryId: form.subCategoryId,
+        productId: form.productId,
+        subCategoryRef: subRef,
+        productRef: prodRef,
+        createdAt: new Date(),
+      });
 
-    setItems((prev) =>
-      prev.map((i) =>
-        i.id === editing.id
-          ? {
-              ...i,
-              ...form,
-              image: imageUrl,
-              subCategoryName:
-                subCategories.find((s) => s.id === form.subCategoryId)?.name ||
-                "",
-              productName:
-                products.find((p) => p.id === form.productId)?.title || "",
-            }
-          : i
-      )
-    );
+      const selectedSub = subCategories.find(
+        (s) => s.id === form.subCategoryId,
+      );
+      const selectedProduct = products.find((p) => p.id === form.productId);
 
-    closeModal();
-  } finally {
-    setLoading(false);
-  }
-};
+      setItems((prev) => [
+        {
+          id: docRef.id,
+          title: form.title,
+          image: imageUrl,
+          categoryId: form.categoryId,
+          subCategoryId: form.subCategoryId,
+          productId: form.productId,
+          subCategoryName: selectedSub?.name || "",
+          productName: selectedProduct?.title || "",
+          createdAt: { seconds: Math.floor(Date.now() / 1000) },
+        },
+        ...prev,
+      ]);
+
+      closeModal();
+    } catch (err) {
+      console.error(err);
+      setError("Failed to add header image.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* UPDATE */
+  const handleUpdate = async () => {
+    if (!editing) return;
+
+    const validationError = validate();
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+
+      let imageUrl = editing.image;
+
+      if (file) {
+        await deleteImageByUrl(editing.image);
+        imageUrl = await uploadImage();
+      }
+
+      const subRef = doc(db, "SubCatagories", form.subCategoryId);
+      const prodRef = doc(db, "Products", form.productId);
+
+      await updateDoc(doc(db, "HeaderImages", editing.id), {
+        title: form.title,
+        image: imageUrl,
+        subCategoryId: form.subCategoryId,
+        productId: form.productId,
+        subCategoryRef: subRef,
+        productRef: prodRef,
+      });
+
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === editing.id
+            ? {
+                ...item,
+                title: form.title,
+                image: imageUrl,
+                categoryId: form.categoryId,
+                subCategoryId: form.subCategoryId,
+                productId: form.productId,
+                subCategoryName:
+                  subCategories.find((s) => s.id === form.subCategoryId)?.name ||
+                  "",
+                productName:
+                  products.find((p) => p.id === form.productId)?.title || "",
+              }
+            : item,
+        ),
+      );
+
+      closeModal();
+    } catch (err) {
+      console.error(err);
+      setError("Failed to update header image.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   /* DELETE */
   const confirmDelete = async () => {
@@ -244,133 +339,196 @@ const handleUpdate = async () => {
 
     try {
       await deleteDoc(doc(db, "HeaderImages", deleting.id));
+      await deleteImageByUrl(deleting.image);
 
-      try {
-        await deleteObject(ref(storage, deleting.image));
-      } catch (err) {
-        console.log("Image delete failed:", err);
-      }
-
-      setItems((prev) => prev.filter((i) => i.id !== deleting.id));
+      setItems((prev) => prev.filter((item) => item.id !== deleting.id));
       setDeleting(null);
     } catch (err) {
-      console.error("Delete failed:", err);
+      console.error(err);
+      setError("Failed to delete header image.");
     }
-  };
-
-  const closeModal = () => {
-    setAdding(false);
-    setEditing(null);
-    setFile(null);
-    setError("");
-    setForm({ title: "", subCategoryId: "", productId: "" });
   };
 
   return (
     <div className="px-6 pt-6 pb-10">
-      {/* HEADER */}
       <div className="flex justify-between mb-8">
         <h1 className="text-4xl font-bold text-[#ff7a59]">Header Images</h1>
 
         <button
-          onClick={() => setAdding(true)}
+          onClick={() => {
+            setEditing(null);
+            setForm(EMPTY_FORM);
+            setFile(null);
+            setError("");
+            setAdding(true);
+          }}
           className="border border-[#ff7a59] px-5 py-2 rounded-xl text-[#ff7a59]"
         >
           Add Header Image
         </button>
       </div>
 
-      {/* TABLE */}
-      <div className="overflow-x-auto rounded-2xl border border-white/10">
-        <table className="w-full text-left">
-          <thead className="bg-[#ece2cb] text-black">
-            <tr>
-              <th className="p-3">Image</th>
-              <th className="p-3">Title</th>
-              <th className="p-3">SubCategory</th>
-              <th className="p-3">Listing</th>
-              <th className="p-3 text-right">Actions</th>
-            </tr>
-          </thead>
+      {error && !adding && !editing && (
+        <div className="mb-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      )}
 
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.id} className="border-b bg-[#ece2cb] text-black">
-                <td className="p-3">
-                  <img src={item.image} className="h-14 w-20 rounded-lg" />
-                </td>
-
-                <td className="p-3 font-semibold">{item.title}</td>
-                <td className="p-3">{item.subCategoryName}</td>
-                <td className="p-3">{item.productName}</td>
-
-                <td className="p-3 text-right">
-                  <button
-                    onClick={() => setEditing(item)}
-                    className="bg-[#ff7a59] px-3 py-1 text-white rounded mr-2"
-                  >
-                    Update
-                  </button>
-
-                  <button
-                    onClick={() => setDeleting(item)}
-                    className="border border-red-400 px-3 py-1 text-red-500"
-                  >
-                    Delete
-                  </button>
-                </td>
+      {pageLoading ? (
+        <div className="rounded-2xl border border-white/10 bg-[#ece2cb] p-8 text-center text-black">
+          Loading header images...
+        </div>
+      ) : items.length === 0 ? (
+        <div className="rounded-2xl border border-white/10 bg-[#ece2cb] p-8 text-center text-black">
+          No header images found.
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-2xl border border-white/10">
+          <table className="w-full text-left">
+            <thead className="bg-[#ece2cb] text-black">
+              <tr>
+                <th className="p-3">Image</th>
+                <th className="p-3">Title</th>
+                <th className="p-3">SubCategory</th>
+                <th className="p-3">Listing</th>
+                <th className="p-3 text-right">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
 
-      {/* ADD / EDIT MODAL */}
+            <tbody>
+              {items.map((item) => (
+                <tr
+                  key={item.id}
+                  className="border-b border-white/10 bg-[#ece2cb] text-black"
+                >
+                  <td className="p-3">
+                    {item.image ? (
+                      <img
+                        src={item.image}
+                        alt={item.title}
+                        className="h-14 w-20 rounded-lg object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-14 w-20 items-center justify-center rounded-lg border border-black/10 bg-black/5 text-[10px] text-black/35">
+                        No Img
+                      </div>
+                    )}
+                  </td>
+
+                  <td className="p-3 font-semibold">{item.title}</td>
+                  <td className="p-3">{item.subCategoryName || "-"}</td>
+                  <td className="p-3">{item.productName || "-"}</td>
+
+                  <td className="p-3 text-right">
+                    <button
+                      onClick={() => setEditing(item)}
+                      className="bg-[#ff7a59] px-3 py-1 text-white rounded mr-2"
+                    >
+                      Update
+                    </button>
+
+                    <button
+                      onClick={() => setDeleting(item)}
+                      className="border border-red-400 px-3 py-1 text-red-500 rounded"
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {(adding || editing) && (
-        <Modal title="Header Image" onClose={closeModal}>
-          {error && <div className="text-red-500 mb-2">{error}</div>}
+        <Modal
+          title={adding ? "Add Header Image" : "Update Header Image"}
+          onClose={closeModal}
+        >
+          {error && (
+            <div className="text-red-500 mb-3 text-sm">{error}</div>
+          )}
 
           <Input
             label="Title"
             value={form.title}
-            onChange={(v: any) => setForm({ ...form, title: v })}
+            onChange={(v: string) => setForm((prev) => ({ ...prev, title: v }))}
+          />
+
+          <Select
+            label="Category"
+            value={form.categoryId}
+            onChange={(v: string) =>
+              setForm((prev) => ({
+                ...prev,
+                categoryId: v,
+                subCategoryId: "",
+                productId: "",
+              }))
+            }
+            options={categories}
           />
 
           <Select
             label="SubCategory"
             value={form.subCategoryId}
-            onChange={(v: any) =>
-              setForm({ ...form, subCategoryId: v, productId: "" })
+            onChange={(v: string) =>
+              setForm((prev) => ({
+                ...prev,
+                subCategoryId: v,
+                productId: "",
+              }))
             }
-            options={subCategories}
+            options={filteredSubCategories}
           />
 
           <Select
             label="Listing"
             value={form.productId}
-            onChange={(v: any) => setForm({ ...form, productId: v })}
-            options={filteredProducts}
+            onChange={(v: string) =>
+              setForm((prev) => ({ ...prev, productId: v }))
+            }
+            options={filteredProducts.map((p) => ({
+              id: p.id,
+              name: p.title,
+            }))}
           />
 
-          <input
-            type="file"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
-            className="mt-4 w-full border rounded-xl p-3"
-          />
+          <div className="mt-4">
+            <label className="font-semibold">Image</label>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              className="mt-1 w-full border rounded-xl p-3"
+            />
+          </div>
+
+          {editing?.image && !file && (
+            <div className="mt-4">
+              <p className="mb-2 text-sm text-black/70">Current image</p>
+              <img
+                src={editing.image}
+                alt={editing.title}
+                className="h-24 w-32 rounded-xl object-cover border"
+              />
+            </div>
+          )}
 
           <button
             onClick={adding ? handleAdd : handleUpdate}
-            className="mt-6 w-full bg-[#ff7a59] text-white py-3 rounded-xl"
+            disabled={loading}
+            className="mt-6 w-full bg-[#ff7a59] text-white py-3 rounded-xl disabled:opacity-60"
           >
-            {loading ? "Saving..." : "Save"}
+            {loading ? "Saving..." : adding ? "Save Header Image" : "Update Header Image"}
           </button>
         </Modal>
       )}
 
-      {/* DELETE MODAL ✅ */}
       {deleting && (
         <Modal title="Delete" onClose={() => setDeleting(null)}>
-          <p className="mb-4">
+          <p className="mb-4 text-black">
             Are you sure you want to delete <b>{deleting.title}</b>?
           </p>
 
@@ -396,11 +554,19 @@ const handleUpdate = async () => {
 }
 
 /* UI */
-function Modal({ children, title, onClose }: any) {
+function Modal({
+  children,
+  title,
+  onClose,
+}: {
+  children: React.ReactNode;
+  title: string;
+  onClose: () => void;
+}) {
   return (
-    <div className="fixed inset-0 bg-black/70 flex justify-center items-center">
-      <div className="bg-[#e8dcc7] p-6 rounded-3xl w-[90%] max-w-lg text-black">
-        <div className="flex justify-between mb-4">
+    <div className="fixed inset-0 z-50 bg-black/70 flex justify-center items-center px-4">
+      <div className="bg-[#e8dcc7] p-6 rounded-3xl w-full max-w-lg text-black max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold text-[#ff7a59]">{title}</h2>
           <button onClick={onClose}>✖</button>
         </div>
@@ -410,7 +576,15 @@ function Modal({ children, title, onClose }: any) {
   );
 }
 
-function Input({ label, value, onChange }: any) {
+function Input({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
   return (
     <div className="mt-3">
       <label className="font-semibold">{label}</label>
@@ -423,7 +597,17 @@ function Input({ label, value, onChange }: any) {
   );
 }
 
-function Select({ label, value, onChange, options }: any) {
+function Select({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: Array<{ id: string; name: string }>;
+}) {
   return (
     <div className="mt-3">
       <label className="font-semibold">{label}</label>
@@ -433,9 +617,9 @@ function Select({ label, value, onChange, options }: any) {
         className="w-full border rounded-xl p-3 mt-1"
       >
         <option value="">Select</option>
-        {options.map((o: any) => (
+        {options.map((o) => (
           <option key={o.id} value={o.id}>
-            {o.name || o.title}
+            {o.name}
           </option>
         ))}
       </select>
