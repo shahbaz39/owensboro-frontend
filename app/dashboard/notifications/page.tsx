@@ -20,6 +20,10 @@ import {
 } from "firebase/storage";
 import { db, storage } from "@/lib/firebaseServices";
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Types
+// ─────────────────────────────────────────────────────────────────────────────
+
 type NotificationStatus =
   | "draft"
   | "queued"
@@ -27,6 +31,8 @@ type NotificationStatus =
   | "sent"
   | "partial"
   | "failed";
+
+type DeliveryMode = "topic" | "token";
 
 type NotificationItem = {
   id: string;
@@ -40,23 +46,43 @@ type NotificationItem = {
   sentAt?: any;
   status?: NotificationStatus;
   errorMessage?: string;
+  deliveryMode?: DeliveryMode;
+  targetTopic?: string;
+  targetUserIds?: string;
 };
 
 type FormState = {
   title: string;
   body: string;
+  deliveryMode: DeliveryMode;
+  targetUserIds: string[];
 };
 
-const EMPTY_FORM: FormState = {
-  title: "",
-  body: "",
+type UserOption = {
+  id: string;
+  displayName: string;
+  email: string;
+  hasToken: boolean;
 };
 
 type BulkDeleteMode = "selected" | "all" | null;
 
+const EMPTY_FORM: FormState = {
+  title: "",
+  body: "",
+  deliveryMode: "topic",
+   targetUserIds: [],
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Page
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function Page() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [users, setUsers] = useState<UserOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -73,21 +99,21 @@ export default function Page() {
   const [file, setFile] = useState<File | null>(null);
   const [removeExistingImage, setRemoveExistingImage] = useState(false);
   const [error, setError] = useState("");
+  const [userSearch, setUserSearch] = useState("");
 
   const [page, setPage] = useState(1);
   const perPage = 9;
 
+  // ── Fetch notifications ────────────────────────────────────────────────────
   const fetchData = async () => {
     try {
       setLoading(true);
       setError("");
-
       const q = query(
         collection(db, "notifications"),
         orderBy("createdAt", "desc"),
       );
       const snap = await getDocs(q);
-
       const data: NotificationItem[] = snap.docs.map((d) => {
         const x = d.data();
         return {
@@ -102,9 +128,11 @@ export default function Page() {
           sentAt: x.sentAt || null,
           status: (x.status || "draft") as NotificationStatus,
           errorMessage: x.errorMessage || "",
+          deliveryMode: (x.deliveryMode || "topic") as DeliveryMode,
+          targetTopic: x.targetTopic || "",
+         targetUserIds: x.targetUserIds || []
         };
       });
-
       setNotifications(data);
     } catch (err) {
       console.error(err);
@@ -114,10 +142,51 @@ export default function Page() {
     }
   };
 
+  // ── Fetch users (lazy — only when modal opens) ─────────────────────────────
+  const fetchUsers = async () => {
+    if (users.length > 0) return; // already loaded
+    try {
+      setUsersLoading(true);
+      const snap = await getDocs(collection(db, "Users"));
+      const list: UserOption[] = snap.docs.map((d) => {
+  const x = d.data();
+
+  const token =
+    x.fcm_token ||
+    x.fcmToken ||
+    x.FCMToken ||
+    x.token ||
+    x.deviceToken ||
+    x.notificationToken ||
+    (Array.isArray(x.fcm_tokens) ? x.fcm_tokens[0] : "");
+
+  return {
+    id: x.uid || d.id,
+
+    displayName:
+      x.display_name ||
+      x.full_name ||
+      x.displayName ||
+      x.name ||
+      "Unknown User",
+
+    email: x.email || "",
+    hasToken: !!token,
+  };
+});
+      setUsers(list);
+    } catch (err) {
+      console.error("Failed to fetch users:", err);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchData();
   }, []);
 
+  // ── Pagination ─────────────────────────────────────────────────────────────
   const totalPages = Math.max(1, Math.ceil(notifications.length / perPage));
   const safePage = Math.min(page, totalPages);
 
@@ -136,6 +205,19 @@ export default function Page() {
 
   const selectedCount = selectedIds.length;
 
+  // ── Filtered users for search ─────────────────────────────────────────────
+  const filteredUsers = useMemo(() => {
+    const q = userSearch.toLowerCase().trim();
+    if (!q) return users;
+    return users.filter(
+      (u) =>
+        u.displayName.toLowerCase().includes(q) ||
+        u.email.toLowerCase().includes(q) ||
+        u.id.toLowerCase().includes(q),
+    );
+  }, [users, userSearch]);
+
+  // ── Image helpers ──────────────────────────────────────────────────────────
   const uploadImage = async () => {
     if (!file) return "";
     const storageRef = ref(storage, `notifications/${Date.now()}-${file.name}`);
@@ -152,6 +234,7 @@ export default function Page() {
     }
   };
 
+  // ── Modal helpers ─────────────────────────────────────────────────────────
   const closeModal = () => {
     setAdding(false);
     setEditing(null);
@@ -160,6 +243,7 @@ export default function Page() {
     setRemoveExistingImage(false);
     setSaving(false);
     setError("");
+    setUserSearch("");
   };
 
   const openAddModal = () => {
@@ -169,6 +253,8 @@ export default function Page() {
     setAdding(true);
     setEditing(null);
     setError("");
+    setUserSearch("");
+    fetchUsers();
   };
 
   const openEditModal = (item: NotificationItem) => {
@@ -179,19 +265,32 @@ export default function Page() {
     setForm({
       title: item.title || "",
       body: item.body || "",
+      deliveryMode: item.deliveryMode || "topic",
+     targetUserIds: item.targetUserIds || [],
     });
     setError("");
+    setUserSearch("");
+    fetchUsers();
   };
 
-  const validateForm = () => {
-    if (!form.title.trim()) return "Title is required.";
-    if (!form.body.trim()) return "Message is required.";
-    return "";
-  };
+const validateForm = () => {
+  if (!form.title.trim()) return "Title is required.";
+  if (!form.body.trim()) return "Message is required.";
 
+  if (
+    form.deliveryMode === "token" &&
+    form.targetUserIds.length === 0
+  ) {
+    return "Please select at least one user.";
+  }
+
+  return "";
+};
+
+  // ── Selection helpers ─────────────────────────────────────────────────────
   const toggleSelectOne = (id: string) => {
     setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((itemId) => itemId !== id) : [...prev, id],
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
     );
   };
 
@@ -202,7 +301,6 @@ export default function Page() {
       );
       return;
     }
-
     setSelectedIds((prev) => {
       const merged = new Set(prev);
       paginatedData.forEach((item) => merged.add(item.id));
@@ -210,30 +308,33 @@ export default function Page() {
     });
   };
 
-  const clearSelection = () => {
-    setSelectedIds([]);
-  };
+  const clearSelection = () => setSelectedIds([]);
 
-  const sendNotificationNow = async (notificationId: string) => {
+  // ── Send ──────────────────────────────────────────────────────────────────
+  const sendNotificationNow = async (
+    notificationId: string,
+    opts?: { mode?: DeliveryMode; targetUserIds?: string },
+  ) => {
     setSendingId(notificationId);
     setError("");
-
     try {
+      const payload: Record<string, any> = {
+        notificationId,
+        mode: opts?.mode ?? "topic",
+      };
+      if (opts?.mode === "token" && opts?.targetUserIds) {
+        payload.targetUserIds = opts.targetUserIds;
+      }
+
       const response = await fetch("/api/admin/notifications/send", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          notificationId,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
 
       const result = await response.json().catch(() => null);
-
-      if (!response.ok) {
+      if (!response.ok)
         throw new Error(result?.message || "Failed to send notification.");
-      }
 
       setNotifications((prev) =>
         prev.map((n) =>
@@ -246,6 +347,9 @@ export default function Page() {
                 status: result?.status ?? "sent",
                 errorMessage: result?.errorMessage ?? "",
                 sentAt: result?.sentAt ?? new Date(),
+                deliveryMode: result?.deliveryMode ?? opts?.mode ?? "topic",
+                targetTopic: result?.targetTopic ?? "",
+                targetUserIds: result?.targetUserIds ?? opts?.targetUserIds ?? "",
               }
             : n,
         ),
@@ -261,17 +365,16 @@ export default function Page() {
     }
   };
 
+  // ── Add ───────────────────────────────────────────────────────────────────
   const handleAdd = async () => {
     const validationError = validateForm();
     if (validationError) {
       setError(validationError);
       return;
     }
-
     try {
       setSaving(true);
       setError("");
-
       const imageUrl = await uploadImage();
 
       const docRef = await addDoc(collection(db, "notifications"), {
@@ -285,6 +388,9 @@ export default function Page() {
         status: "queued",
         errorMessage: "",
         sentAt: null,
+        deliveryMode: form.deliveryMode,
+        targetTopic: form.deliveryMode === "topic" ? "all_users" : "",
+        targetUserIds: form.deliveryMode === "token" ? form.targetUserIds : "",
       });
 
       setNotifications((prev) => [
@@ -300,14 +406,22 @@ export default function Page() {
           status: "queued",
           errorMessage: "",
           sentAt: null,
+          deliveryMode: form.deliveryMode,
+          targetTopic: form.deliveryMode === "topic" ? "all_users" : "",
+          targetUserIds: form.deliveryMode === "token" ? form.targetUserIds : "",
         },
         ...prev,
       ]);
 
       setPage(1);
+      const capturedMode = form.deliveryMode;
+      const capturedUserId = form.targetUserIds;
       closeModal();
 
-      await sendNotificationNow(docRef.id);
+      await sendNotificationNow(docRef.id, {
+        mode: capturedMode,
+        targetUserIds: capturedUserId || undefined,
+      });
     } catch (err) {
       console.error(err);
       setError("Failed to create notification.");
@@ -315,25 +429,21 @@ export default function Page() {
     }
   };
 
+  // ── Update ─────────────────────────────────────────────────────────────────
   const handleUpdate = async () => {
     if (!editing) return;
-
     const validationError = validateForm();
     if (validationError) {
       setError(validationError);
       return;
     }
-
     try {
       setSaving(true);
       setError("");
 
       let nextImageUrl = editing.image || "";
-
       if (file) {
-        if (editing.image) {
-          await safelyDeleteImageByUrl(editing.image);
-        }
+        if (editing.image) await safelyDeleteImageByUrl(editing.image);
         nextImageUrl = await uploadImage();
       } else if (removeExistingImage) {
         await safelyDeleteImageByUrl(editing.image);
@@ -350,6 +460,9 @@ export default function Page() {
         status: "draft",
         errorMessage: "",
         sentAt: null,
+        deliveryMode: form.deliveryMode,
+        targetTopic: form.deliveryMode === "topic" ? "all_users" : "",
+        targetUserIds: form.deliveryMode === "token" ? form.targetUserIds : "",
       });
 
       setNotifications((prev) =>
@@ -366,11 +479,14 @@ export default function Page() {
                 status: "draft",
                 errorMessage: "",
                 sentAt: null,
+                deliveryMode: form.deliveryMode,
+                targetTopic: form.deliveryMode === "topic" ? "all_users" : "",
+                targetUserIds:
+                  form.deliveryMode === "token" ? form.targetUserIds : "",
               }
             : n,
         ),
       );
-
       closeModal();
     } catch (err) {
       console.error(err);
@@ -379,20 +495,18 @@ export default function Page() {
     }
   };
 
+  // ── Delete ─────────────────────────────────────────────────────────────────
   const confirmDelete = async () => {
     if (!deleting) return;
-
     try {
       await deleteDoc(doc(db, "notifications", deleting.id));
       await safelyDeleteImageByUrl(deleting.image);
-
       const remaining = notifications.filter((n) => n.id !== deleting.id);
       setNotifications(remaining);
       setSelectedIds((prev) => prev.filter((id) => id !== deleting.id));
       setDeleting(null);
-
-      const nextTotalPages = Math.max(1, Math.ceil(remaining.length / perPage));
-      if (page > nextTotalPages) setPage(nextTotalPages);
+      const nextTotal = Math.max(1, Math.ceil(remaining.length / perPage));
+      if (page > nextTotal) setPage(nextTotal);
     } catch (err) {
       console.error(err);
       setError("Failed to delete notification.");
@@ -404,12 +518,8 @@ export default function Page() {
     try {
       setBulkDeleting(true);
       setError("");
-
       const idsToDelete =
-        bulkDeleteMode === "all"
-          ? notifications.map((n) => n.id)
-          : selectedIds;
-
+        bulkDeleteMode === "all" ? notifications.map((n) => n.id) : selectedIds;
       const itemsToDelete =
         bulkDeleteMode === "all"
           ? notifications
@@ -430,11 +540,8 @@ export default function Page() {
       setNotifications(remaining);
       setSelectedIds([]);
       setBulkDeleteMode(null);
-
-      const nextTotalPages = Math.max(1, Math.ceil(remaining.length / perPage));
-      if (page > nextTotalPages) {
-        setPage(nextTotalPages);
-      }
+      const nextTotal = Math.max(1, Math.ceil(remaining.length / perPage));
+      if (page > nextTotal) setPage(nextTotal);
     } catch (err) {
       console.error(err);
       setError(
@@ -448,6 +555,7 @@ export default function Page() {
     }
   };
 
+  // ── Derived UI helpers ─────────────────────────────────────────────────────
   const currentImagePreview = file
     ? URL.createObjectURL(file)
     : editing && !removeExistingImage
@@ -456,49 +564,60 @@ export default function Page() {
 
   const getStatusBadge = (item: NotificationItem) => {
     const status = item.status || (item.sent ? "sent" : "draft");
-
     switch (status) {
-      case "sent":
-        return "bg-green-100 text-green-700";
-      case "partial":
-        return "bg-orange-100 text-orange-700";
-      case "failed":
-        return "bg-red-100 text-red-700";
-      case "sending":
-        return "bg-blue-100 text-blue-700";
-      case "queued":
-        return "bg-purple-100 text-purple-700";
-      default:
-        return "bg-yellow-100 text-yellow-700";
+      case "sent":     return "bg-green-100 text-green-700";
+      case "partial":  return "bg-orange-100 text-orange-700";
+      case "failed":   return "bg-red-100 text-red-700";
+      case "sending":  return "bg-blue-100 text-blue-700";
+      case "queued":   return "bg-purple-100 text-purple-700";
+      default:         return "bg-yellow-100 text-yellow-700";
     }
   };
 
+  const getDeliveryBadge = (item: NotificationItem) => {
+    if (item.deliveryMode === "token")
+      return "bg-indigo-100 text-indigo-700";
+    return "bg-teal-100 text-teal-700";
+  };
+
+  const getDeliveryLabel = (item: NotificationItem) => {
+    if (item.deliveryMode === "token") return "👤 Targeted";
+    return "📡 All Users";
+  };
+
+  const selectedUserInfo = users.find((u) => u.id === form.targetUserIds);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  RENDER
+  // ═══════════════════════════════════════════════════════════════════════════
   return (
     <div className="px-4 pt-6 pb-10 md:px-8">
+      {/* Header */}
       <div className="mb-8 flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-[#ff7a59] md:text-5xl">
             Notifications
           </h1>
           <p className="mt-2 text-lg font-medium text-[#e8dcc7] md:text-xl">
-            Create and manage FCM push notifications for app users.
+            Broadcast to all users via topic or target a specific user.
           </p>
         </div>
-
         <button
           onClick={openAddModal}
-          className="inline-flex h-11 items-center justify-center rounded-xl border border-[#ff7a59] px-5 text-sm font-semibold text-[#ff7a59] transition hover:bg-[#ff7a59] hover:text-white"
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-[#ff7a59] px-5 text-sm font-semibold text-[#ff7a59] transition hover:bg-[#ff7a59] hover:text-white"
         >
-          Create Notification
+          <span>＋</span> Create Notification
         </button>
       </div>
 
+      {/* Global error */}
       {error && !adding && !editing && (
         <div className="mb-6 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-600">
           {error}
         </div>
       )}
 
+      {/* Bulk toolbar */}
       {!loading && notifications.length > 0 && (
         <div className="mb-6 rounded-2xl border border-white/10 bg-[#0a0a0a] p-4">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -512,11 +631,9 @@ export default function Page() {
                 />
                 Select all on this page
               </label>
-
               <span className="text-sm text-[#f3ead7]/70">
                 Selected: {selectedCount}
               </span>
-
               {selectedCount > 0 && (
                 <button
                   onClick={clearSelection}
@@ -526,7 +643,6 @@ export default function Page() {
                 </button>
               )}
             </div>
-
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setBulkDeleteMode("selected")}
@@ -535,7 +651,6 @@ export default function Page() {
               >
                 Delete Selected
               </button>
-
               <button
                 onClick={() => setBulkDeleteMode("all")}
                 disabled={notifications.length === 0}
@@ -548,6 +663,7 @@ export default function Page() {
         </div>
       )}
 
+      {/* Grid */}
       {loading ? (
         <div className="rounded-2xl border border-[#ff7a59]/40 bg-[#0a0a0a] px-5 py-10 text-center text-[#f3ead7]/70">
           Loading notifications...
@@ -560,7 +676,6 @@ export default function Page() {
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
           {paginatedData.map((n) => {
             const checked = selectedIds.includes(n.id);
-
             return (
               <div
                 key={n.id}
@@ -569,7 +684,8 @@ export default function Page() {
                 }`}
               >
                 <div>
-                  <div className="mb-3 flex items-center justify-between gap-3">
+                  {/* Top row: checkbox + badges */}
+                  <div className="mb-3 flex items-center justify-between gap-2">
                     <label className="flex items-center gap-2 text-xs font-semibold text-black/70">
                       <input
                         type="checkbox"
@@ -579,14 +695,21 @@ export default function Page() {
                       />
                       Select
                     </label>
-
-                    <span
-                      className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${getStatusBadge(n)}`}
-                    >
-                      {n.status || (n.sent ? "sent" : "draft")}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${getDeliveryBadge(n)}`}
+                      >
+                        {getDeliveryLabel(n)}
+                      </span>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${getStatusBadge(n)}`}
+                      >
+                        {n.status || (n.sent ? "sent" : "draft")}
+                      </span>
+                    </div>
                   </div>
 
+                  {/* Image */}
                   {n.image ? (
                     <div className="overflow-hidden rounded-xl">
                       <img
@@ -601,25 +724,27 @@ export default function Page() {
                     </div>
                   )}
 
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="truncate text-base font-semibold transition group-hover:text-[#ff7a59] md:text-lg">
-                      {n.title}
-                    </h3>
-                  </div>
+                  {/* Title */}
+                  <h3 className="truncate text-base font-semibold transition group-hover:text-[#ff7a59] md:text-lg">
+                    {n.title}
+                  </h3>
 
-                  <p className="mt-2 line-clamp-4 text-sm text-black/65">
+                  {/* Body */}
+                  <p className="mt-2 line-clamp-3 text-sm text-black/65">
                     {n.body}
                   </p>
 
+                  {/* Stats */}
                   <div className="mt-3 flex flex-wrap gap-2 text-xs">
                     <span className="rounded-full bg-black/5 px-2 py-1">
-                      Success: {n.sentCount || 0}
+                      ✅ Success: {n.sentCount || 0}
                     </span>
                     <span className="rounded-full bg-black/5 px-2 py-1">
-                      Failed: {n.failedCount || 0}
+                      ❌ Failed: {n.failedCount || 0}
                     </span>
                   </div>
 
+                  {/* Error */}
                   {n.errorMessage ? (
                     <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
                       {n.errorMessage}
@@ -627,6 +752,7 @@ export default function Page() {
                   ) : null}
                 </div>
 
+                {/* Action buttons */}
                 <div className="mt-4 flex gap-2">
                   <button
                     onClick={() => setSelected(n)}
@@ -634,14 +760,12 @@ export default function Page() {
                   >
                     View
                   </button>
-
                   <button
                     onClick={() => openEditModal(n)}
                     className="inline-flex w-full items-center justify-center rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:shadow-md md:text-sm"
                   >
                     Update
                   </button>
-
                   <button
                     onClick={() => setDeleting(n)}
                     className="inline-flex w-full items-center justify-center rounded-lg border border-red-400/40 px-3 py-2 text-xs font-semibold text-red-500 transition-all duration-200 hover:scale-[1.03] hover:bg-red-500 hover:text-white hover:shadow-md md:text-sm"
@@ -651,11 +775,24 @@ export default function Page() {
                 </div>
 
                 <button
-                  onClick={() => sendNotificationNow(n.id)}
+                  onClick={() =>
+                    sendNotificationNow(n.id, {
+                      mode: n.deliveryMode ?? "topic",
+                      targetUserIds: n.targetUserIds || undefined,
+                    })
+                  }
                   disabled={sendingId === n.id}
-                  className="mt-3 inline-flex w-full items-center justify-center rounded-lg bg-black px-3 py-2 text-xs font-semibold text-white transition-all duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-black px-3 py-2 text-xs font-semibold text-white transition-all duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
                 >
-                  {sendingId === n.id ? "Sending..." : "Send Now"}
+                  {sendingId === n.id ? (
+                    <>
+                      <span className="animate-spin">⏳</span> Sending...
+                    </>
+                  ) : (
+                    <>
+                      <span>🚀</span> Send Now
+                    </>
+                  )}
                 </button>
               </div>
             );
@@ -663,6 +800,7 @@ export default function Page() {
         </div>
       )}
 
+      {/* Pagination */}
       {notifications.length > perPage && (
         <div className="mt-8 flex items-center justify-between text-sm text-[#f3ead7]/70">
           <p>
@@ -670,7 +808,6 @@ export default function Page() {
             {Math.min(safePage * perPage, notifications.length)} of{" "}
             {notifications.length} notifications
           </p>
-
           <div className="flex gap-2">
             <button
               disabled={safePage === 1}
@@ -679,11 +816,9 @@ export default function Page() {
             >
               Previous
             </button>
-
             <button className="rounded-lg bg-[#ff7a59] px-3 py-1 text-white">
               {safePage}
             </button>
-
             <button
               disabled={safePage === totalPages}
               onClick={() => setPage((p) => p + 1)}
@@ -695,6 +830,7 @@ export default function Page() {
         </div>
       )}
 
+      {/* ── Create / Edit Modal ── */}
       {(adding || editing) && (
         <Modal
           title={adding ? "Create Notification" : "Edit Notification"}
@@ -709,20 +845,180 @@ export default function Page() {
           <Input
             label="Title"
             value={form.title}
-            onChange={(v: string) => setForm((prev) => ({ ...prev, title: v }))}
+            onChange={(v) => setForm((p) => ({ ...p, title: v }))}
           />
 
           <Textarea
             label="Message"
             value={form.body}
-            onChange={(v: string) => setForm((prev) => ({ ...prev, body: v }))}
+            onChange={(v) => setForm((p) => ({ ...p, body: v }))}
           />
 
+          {/* ── Delivery Target ── */}
+          <div className="mt-5">
+            <label className="text-sm font-semibold text-black">
+              Send To
+            </label>
+
+            {/* Toggle pills */}
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() =>
+                  setForm((p) => ({ ...p, deliveryMode: "topic", targetUserIds: "" }))
+                }
+                className={`flex flex-col items-center gap-1.5 rounded-2xl border-2 px-4 py-4 text-sm font-semibold transition-all duration-200 ${
+                  form.deliveryMode === "topic"
+                    ? "border-[#ff7a59] bg-[#ff7a59]/10 text-[#ff7a59]"
+                    : "border-black/10 bg-white/60 text-black/60 hover:border-black/25"
+                }`}
+              >
+                <span className="text-2xl">📡</span>
+                <span>All Users</span>
+                <span className="text-[10px] font-normal opacity-70">
+                  via topic: all_users
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setForm((p) => ({ ...p, deliveryMode: "token" }))
+                }
+                className={`flex flex-col items-center gap-1.5 rounded-2xl border-2 px-4 py-4 text-sm font-semibold transition-all duration-200 ${
+                  form.deliveryMode === "token"
+                    ? "border-[#ff7a59] bg-[#ff7a59]/10 text-[#ff7a59]"
+                    : "border-black/10 bg-white/60 text-black/60 hover:border-black/25"
+                }`}
+              >
+                <span className="text-2xl">👤</span>
+                <span>Specific User</span>
+                <span className="text-[10px] font-normal opacity-70">
+                  via device token
+                </span>
+              </button>
+            </div>
+
+            {/* User picker */}
+            {form.deliveryMode === "token" && (
+              
+              <div className="mt-4 rounded-2xl border border-[#ff7a59]/25 bg-white/40 p-4">
+                <p className="mb-3 text-xs font-semibold text-black/60 uppercase tracking-wide">
+                  Select Target User
+                </p>
+
+                {/* Search */}
+                <input
+                  type="text"
+                  placeholder="Search by name, email or ID…"
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  className="mb-3 w-full rounded-xl border border-[#ff7a59]/40 bg-white px-3 py-2.5 text-sm text-black placeholder:text-black/35 focus:outline-none focus:ring-2 focus:ring-[#ff7a59]"
+                />
+
+                {usersLoading ? (
+                  <p className="py-4 text-center text-sm text-black/40">
+                    Loading users…
+                  </p>
+                ) : filteredUsers.length === 0 ? (
+                  <p className="py-4 text-center text-sm text-black/40">
+                    No users found.
+                  </p>
+                ) : (
+                  <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
+                    {filteredUsers.map((u) => {
+                     const isActive = form.targetUserIds.includes(u.id);
+                      return (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() =>
+  setForm((p) => {
+    const exists = p.targetUserIds.includes(u.id);
+
+    return {
+      ...p,
+      targetUserIds: exists
+        ? p.targetUserIds.filter((id) => id !== u.id)
+        : [...p.targetUserIds, u.id],
+    };
+  })
+}
+                          className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-all duration-150 ${
+                            isActive
+                              ? "bg-[#ff7a59] text-white"
+                              : "bg-white/70 text-black hover:bg-white"
+                          }`}
+                        >
+                          {/* Avatar placeholder */}
+                          <div
+                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                              isActive
+                                ? "bg-white/25 text-white"
+                                : "bg-[#ff7a59]/15 text-[#ff7a59]"
+                            }`}
+                          >
+                            {(u.displayName || u.email || "?")
+                              .charAt(0)
+                              .toUpperCase()}
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-semibold">
+                              {u.displayName || "(no name)"}
+                            </p>
+                            <p
+                              className={`truncate text-xs ${
+                                isActive ? "text-white/75" : "text-black/50"
+                              }`}
+                            >
+                              {u.email || u.id}
+                            </p>
+                          </div>
+
+                          {/* Token indicator */}
+                          <span
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              u.hasToken
+                                ? isActive
+                                  ? "bg-white/20 text-white"
+                                  : "bg-green-100 text-green-700"
+                                : isActive
+                                  ? "bg-white/20 text-white/70"
+                                  : "bg-red-100 text-red-500"
+                            }`}
+                          >
+                            {u.hasToken ? "● Token" : "No token"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Selected user summary */}
+                {selectedUserInfo && (
+                  <div className="mt-3 flex items-center gap-2 rounded-xl border border-[#ff7a59]/30 bg-[#ff7a59]/5 px-3 py-2 text-sm">
+                    <span className="text-[#ff7a59]">✓</span>
+                    <span className="font-semibold text-black">
+                      {selectedUserInfo.displayName || selectedUserInfo.email || selectedUserInfo.id}
+                    </span>
+                    {!selectedUserInfo.hasToken && (
+                      <span className="ml-auto text-xs text-red-500">
+                        ⚠ No token
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ── Image Upload ── */}
           <div className="mt-5">
             <label className="text-sm font-semibold text-black">
               Image (optional)
             </label>
-
             <div className="mt-3 flex flex-col items-center gap-4 rounded-2xl border border-[#ff7a59]/25 bg-white/35 px-4 py-5">
               {currentImagePreview ? (
                 <img
@@ -735,7 +1031,6 @@ export default function Page() {
                   No image
                 </div>
               )}
-
               <div className="flex flex-wrap items-center justify-center gap-3">
                 <label className="cursor-pointer rounded-xl border border-[#ff7a59] px-4 py-2 text-sm font-semibold text-[#ff7a59] transition hover:bg-[#ff7a59] hover:text-white">
                   {editing ? "Change Image" : "Upload Image"}
@@ -749,7 +1044,6 @@ export default function Page() {
                     }}
                   />
                 </label>
-
                 {(file || editing?.image) && (
                   <button
                     type="button"
@@ -773,15 +1067,18 @@ export default function Page() {
           >
             {saving
               ? adding
-                ? "Creating..."
-                : "Saving..."
+                ? "Creating…"
+                : "Saving…"
               : adding
-                ? "Create & Send FCM"
+                ? form.deliveryMode === "topic"
+                  ? "🚀 Create & Send to All Users"
+                  : "🚀 Create & Send to User"
                 : "Save Changes"}
           </button>
         </Modal>
       )}
 
+      {/* ── View Modal ── */}
       {selected && (
         <Modal title="Notification Details" onClose={() => setSelected(null)}>
           <div className="space-y-4 text-black">
@@ -794,29 +1091,56 @@ export default function Page() {
             ) : null}
 
             <div>
-              <p className="text-sm font-semibold text-black/60">Title</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-black/50">
+                Title
+              </p>
               <p className="mt-1 text-base font-semibold">{selected.title}</p>
             </div>
 
             <div>
-              <p className="text-sm font-semibold text-black/60">Message</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-black/50">
+                Message
+              </p>
               <div className="mt-1 rounded-xl border border-black/10 bg-white p-4 text-sm">
                 {selected.body}
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-3 text-sm">
-              <span className="rounded-full bg-black/5 px-3 py-1">
-                Status: {selected.status || (selected.sent ? "sent" : "draft")}
+            {/* Delivery info */}
+            <div className="rounded-xl border border-black/10 bg-white/60 p-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-black/50">
+                Delivery Details
+              </p>
+              <div className="flex flex-wrap gap-2 text-sm">
+                <span
+                  className={`rounded-full px-3 py-1 font-semibold ${getDeliveryBadge(selected)}`}
+                >
+                  {getDeliveryLabel(selected)}
+                </span>
+                {selected.deliveryMode === "topic" && selected.targetTopic && (
+                  <span className="rounded-full bg-black/5 px-3 py-1">
+                    Topic: {selected.targetTopic}
+                  </span>
+                )}
+                {selected.deliveryMode === "token" && selected.targetUserIds && (
+                  <span className="rounded-full bg-black/5 px-3 py-1 font-mono text-xs">
+                    User ID: {selected.targetUserIds}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2 text-sm">
+              <span
+                className={`rounded-full px-3 py-1 font-semibold ${getStatusBadge(selected)}`}
+              >
+                {selected.status || (selected.sent ? "sent" : "draft")}
               </span>
               <span className="rounded-full bg-black/5 px-3 py-1">
-                Sent: {selected.sent ? "Yes" : "No"}
+                ✅ Success: {selected.sentCount || 0}
               </span>
               <span className="rounded-full bg-black/5 px-3 py-1">
-                Success: {selected.sentCount || 0}
-              </span>
-              <span className="rounded-full bg-black/5 px-3 py-1">
-                Failed: {selected.failedCount || 0}
+                ❌ Failed: {selected.failedCount || 0}
               </span>
             </div>
 
@@ -829,16 +1153,16 @@ export default function Page() {
         </Modal>
       )}
 
+      {/* ── Delete Modal ── */}
       {deleting && (
         <Modal title="Delete Notification" onClose={() => setDeleting(null)}>
           <p className="text-black">
-            Delete <span className="font-semibold">{deleting.title}</span>?
+            Delete{" "}
+            <span className="font-semibold">"{deleting.title}"</span>?
           </p>
-
           <p className="mt-2 text-sm text-black/60">
-            This action will remove the notification record from your dashboard.
+            This will permanently remove the notification and its image from storage.
           </p>
-
           <div className="mt-6 flex justify-end gap-3">
             <button
               onClick={() => setDeleting(null)}
@@ -848,7 +1172,7 @@ export default function Page() {
             </button>
             <button
               onClick={confirmDelete}
-              className="rounded-xl bg-red-500 px-4 py-2 text-white"
+              className="rounded-xl bg-red-500 px-4 py-2 font-semibold text-white"
             >
               Delete
             </button>
@@ -856,6 +1180,7 @@ export default function Page() {
         </Modal>
       )}
 
+      {/* ── Bulk Delete Modal ── */}
       {bulkDeleteMode && (
         <Modal
           title={
@@ -872,12 +1197,9 @@ export default function Page() {
               ? "Are you sure you want to delete all notifications?"
               : `Are you sure you want to delete ${selectedCount} selected notification${selectedCount > 1 ? "s" : ""}?`}
           </p>
-
           <p className="mt-2 text-sm text-black/60">
-            This action cannot be undone and will also remove related images from
-            storage.
+            This action cannot be undone and will also remove related images from storage.
           </p>
-
           <div className="mt-6 flex justify-end gap-3">
             <button
               onClick={() => setBulkDeleteMode(null)}
@@ -889,12 +1211,12 @@ export default function Page() {
             <button
               onClick={handleBulkDelete}
               disabled={bulkDeleting}
-              className="rounded-xl bg-red-500 px-4 py-2 text-white disabled:opacity-50"
+              className="rounded-xl bg-red-500 px-4 py-2 font-semibold text-white disabled:opacity-50"
             >
               {bulkDeleting
                 ? bulkDeleteMode === "all"
-                  ? "Deleting All..."
-                  : "Deleting..."
+                  ? "Deleting All…"
+                  : "Deleting…"
                 : bulkDeleteMode === "all"
                   ? "Delete All"
                   : "Delete Selected"}
@@ -905,6 +1227,10 @@ export default function Page() {
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Shared UI components
+// ─────────────────────────────────────────────────────────────────────────────
 
 function Modal({
   children,
@@ -918,7 +1244,7 @@ function Modal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
       <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-[#e8dcc7] p-6 shadow-2xl">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-5 flex items-center justify-between">
           <h2 className="text-2xl font-bold text-[#ff7a59]">{title}</h2>
           <button
             onClick={onClose}

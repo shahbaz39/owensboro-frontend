@@ -176,14 +176,11 @@ export default function Page() {
   }, [form.subCategoryId, products]);
 
   /* VALIDATION */
-  const validate = () => {
-    if (!form.title.trim()) return "Title is required";
-    if (!form.categoryId) return "Category is required";
-    if (!form.subCategoryId) return "SubCategory is required";
-    if (!form.productId) return "Listing is required";
-    if (adding && !file) return "Image is required";
-    return "";
-  };
+const validate = () => {
+  if (!form.title.trim()) return "Title is required";
+  if (!form.categoryId) return "Category is required";
+  return "";
+};
 
   /* HELPERS */
   const closeModal = () => {
@@ -229,8 +226,13 @@ export default function Page() {
 
       const imageUrl = await uploadImage();
 
-      const subRef = doc(db, "SubCatagories", form.subCategoryId);
-      const prodRef = doc(db, "Products", form.productId);
+      const subRef = form.subCategoryId
+  ? doc(db, "SubCatagories", form.subCategoryId)
+  : null;
+
+const prodRef = form.productId
+  ? doc(db, "Products", form.productId)
+  : null;
 
       const docRef = await addDoc(collection(db, "HeaderImages"), {
         title: form.title,
@@ -292,8 +294,13 @@ export default function Page() {
         imageUrl = await uploadImage();
       }
 
-      const subRef = doc(db, "SubCatagories", form.subCategoryId);
-      const prodRef = doc(db, "Products", form.productId);
+    const subRef = form.subCategoryId
+  ? doc(db, "SubCatagories", form.subCategoryId)
+  : null;
+
+const prodRef = form.productId
+  ? doc(db, "Products", form.productId)
+  : null;
 
       await updateDoc(doc(db, "HeaderImages", editing.id), {
         title: form.title,

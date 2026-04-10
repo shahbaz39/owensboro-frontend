@@ -19,14 +19,17 @@ import {
 import { db, storage } from "@/lib/firebaseServices";
 
 /* TYPES */
-type SubCategory = { id: string; name: string };
+type Category = { id: string; name: string };
+type SubCategory = { id: string; name: string; categoryId: string };
 type Product = { id: string; name: string; subCategoryId: string };
 
 type Banner = {
   id: string;
   title: string;
+  categoryId: string;
   subCategoryId: string;
   productId: string;
+  category: string;
   subCategory: string;
   product: string;
   image: string;
@@ -34,6 +37,7 @@ type Banner = {
 
 export default function Page() {
   const [banners, setBanners] = useState<Banner[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [subCategories, setSubCategories] = useState<SubCategory[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
 
@@ -46,6 +50,7 @@ export default function Page() {
 
   const [form, setForm] = useState({
     title: "",
+    categoryId: "",
     subCategoryId: "",
     productId: "",
   });
@@ -56,31 +61,41 @@ export default function Page() {
   useEffect(() => {
     const fetchData = async () => {
       const bannerSnap = await getDocs(collection(db, "Banner"));
+      const catSnap = await getDocs(collection(db, "Catagories"));
       const subSnap = await getDocs(collection(db, "SubCatagories"));
       const prodSnap = await getDocs(collection(db, "Products"));
+
+      const cats = catSnap.docs.map((d) => ({
+        id: d.id,
+        name: d.data().catagoryName || d.data().name,
+      }));
 
       const subs = subSnap.docs.map((d) => ({
         id: d.id,
         name: d.data().name,
+        categoryId: d.data().catagoriesRef?.id || "",
       }));
 
       const prods = prodSnap.docs.map((d) => ({
         id: d.id,
         name: d.data().productName,
-        subCategoryId: d.data().subCatagoryRef?.id,
+        subCategoryId: d.data().subCatagoryRef?.id || "",
       }));
 
       const data = bannerSnap.docs.map((d) => {
         const x = d.data();
 
+        const cat = cats.find((c) => c.id === x.categoryRef?.id);
         const sub = subs.find((s) => s.id === x.subCategoryRef?.id);
         const prod = prods.find((p) => p.id === x.productRef?.id);
 
         return {
           id: d.id,
           title: x.bannerName,
+          categoryId: x.categoryRef?.id || "",
           subCategoryId: x.subCategoryRef?.id || "",
           productId: x.productRef?.id || "",
+          category: cat?.name || "",
           subCategory: sub?.name || "",
           product: prod?.name || "",
           image: x.image,
@@ -88,6 +103,7 @@ export default function Page() {
       });
 
       setBanners(data);
+      setCategories(cats);
       setSubCategories(subs);
       setProducts(prods);
     };
@@ -95,9 +111,17 @@ export default function Page() {
     fetchData();
   }, []);
 
-  /* FILTER PRODUCTS */
+  /* FILTERS */
+  const filteredSubCategories = useMemo(() => {
+    return subCategories.filter(
+      (s) => s.categoryId === form.categoryId
+    );
+  }, [subCategories, form.categoryId]);
+
   const filteredProducts = useMemo(() => {
-    return products.filter((p) => p.subCategoryId === form.subCategoryId);
+    return products.filter(
+      (p) => p.subCategoryId === form.subCategoryId
+    );
   }, [products, form.subCategoryId]);
 
   /* PREFILL EDIT */
@@ -105,18 +129,16 @@ export default function Page() {
     if (editing) {
       setForm({
         title: editing.title,
+        categoryId: editing.categoryId,
         subCategoryId: editing.subCategoryId,
         productId: editing.productId,
       });
     }
   }, [editing]);
 
-  /* VALIDATION */
+  /* VALIDATION (ONLY CATEGORY IS MANDATORY) */
   const validate = () => {
-    if (!form.title) return "Title is required";
-    if (!form.subCategoryId) return "SubCategory required";
-    if (!form.productId) return "Product required";
-    if (adding && !file) return "Image required";
+    if (!form.categoryId) return "Category is required";
     return "";
   };
 
@@ -145,8 +167,9 @@ export default function Page() {
 
     const docRef = await addDoc(collection(db, "Banner"), {
       bannerName: form.title,
-      subCategoryRef: doc(db, "SubCatagories", form.subCategoryId),
-      productRef: doc(db, "Products", form.productId),
+      categoryRef: form.categoryId ? doc(db, "Catagories", form.categoryId) : null,
+      subCategoryRef: form.subCategoryId ? doc(db, "SubCatagories", form.subCategoryId) : null,
+      productRef: form.productId ? doc(db, "Products", form.productId) : null,
       image: imageUrl,
     });
 
@@ -154,10 +177,11 @@ export default function Page() {
       {
         id: docRef.id,
         title: form.title,
+        categoryId: form.categoryId,
         subCategoryId: form.subCategoryId,
         productId: form.productId,
-        subCategory:
-          subCategories.find((s) => s.id === form.subCategoryId)?.name || "",
+        category: categories.find((c) => c.id === form.categoryId)?.name || "",
+        subCategory: subCategories.find((s) => s.id === form.subCategoryId)?.name || "",
         product: products.find((p) => p.id === form.productId)?.name || "",
         image: imageUrl,
       },
@@ -186,8 +210,9 @@ export default function Page() {
 
     await updateDoc(doc(db, "Banner", editing.id), {
       bannerName: form.title,
-      subCategoryRef: doc(db, "SubCatagories", form.subCategoryId),
-      productRef: doc(db, "Products", form.productId),
+      categoryRef: form.categoryId ? doc(db, "Catagories", form.categoryId) : null,
+      subCategoryRef: form.subCategoryId ? doc(db, "SubCatagories", form.subCategoryId) : null,
+      productRef: form.productId ? doc(db, "Products", form.productId) : null,
       image: imageUrl,
     });
 
@@ -199,8 +224,8 @@ export default function Page() {
               ...form,
               image: imageUrl,
             }
-          : b,
-      ),
+          : b
+      )
     );
 
     closeModal();
@@ -223,7 +248,12 @@ export default function Page() {
     setEditing(null);
     setFile(null);
     setError("");
-    setForm({ title: "", subCategoryId: "", productId: "" });
+    setForm({
+      title: "",
+      categoryId: "",
+      subCategoryId: "",
+      productId: "",
+    });
   };
 
   return (
@@ -247,6 +277,7 @@ export default function Page() {
             <tr>
               <th className="p-3">Image</th>
               <th className="p-3">Title</th>
+              <th className="p-3">Category</th>
               <th className="p-3">SubCategory</th>
               <th className="p-3">Listing</th>
               <th className="p-3 text-right">Actions</th>
@@ -260,6 +291,7 @@ export default function Page() {
                   <img src={b.image} className="h-14 w-20 rounded-lg" />
                 </td>
                 <td className="p-3 font-semibold">{b.title}</td>
+                <td className="p-3">{b.category}</td>
                 <td className="p-3">{b.subCategory}</td>
                 <td className="p-3">{b.product}</td>
 
@@ -272,17 +304,10 @@ export default function Page() {
                   </button>
                   <button
                     onClick={async () => {
-                      if (
-                        !confirm("Are you sure you want to delete this banner?")
-                      )
-                        return;
-
+                      if (!confirm("Delete banner?")) return;
                       await deleteDoc(doc(db, "Banner", b.id));
                       await deleteImage(b.image);
-
-                      setBanners((prev) =>
-                        prev.filter((item) => item.id !== b.id),
-                      );
+                      setBanners((prev) => prev.filter((x) => x.id !== b.id));
                     }}
                     className="border border-red-400 px-3 py-1 text-red-500"
                   >
@@ -306,20 +331,32 @@ export default function Page() {
             onChange={(v: any) => setForm({ ...form, title: v })}
           />
 
+          {/* CATEGORY (MANDATORY) */}
+          <Select
+            value={form.categoryId}
+            onChange={(v: any) =>
+              setForm({ ...form, categoryId: v, subCategoryId: "", productId: "" })
+            }
+            options={categories}
+            placeholder="Select Category (required)"
+          />
+
+          {/* SUBCATEGORY */}
           <Select
             value={form.subCategoryId}
             onChange={(v: any) =>
               setForm({ ...form, subCategoryId: v, productId: "" })
             }
-            options={subCategories}
-            placeholder="Select SubCategory"
+            options={filteredSubCategories}
+            placeholder="Select SubCategory (optional)"
           />
 
+          {/* PRODUCT */}
           <Select
             value={form.productId}
             onChange={(v: any) => setForm({ ...form, productId: v })}
             options={filteredProducts}
-            placeholder="Select Listing"
+            placeholder="Select Listing (optional)"
           />
 
           <div className="mt-4 border border-[#ff7a59] rounded-xl p-4">

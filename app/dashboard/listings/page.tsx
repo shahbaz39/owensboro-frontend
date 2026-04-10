@@ -239,7 +239,7 @@ export default function Page() {
 
   const validateForm = () => {
     if (!form.categoryId) return "Please select a category.";
-    if (!form.subCategoryId) return "Please select a sub category.";
+    // if (!form.subCategoryId) return "Please select a sub category.";
     if (!form.title.trim()) return "Title is required.";
 
     // ✅ IMAGE MANDATORY FIX
@@ -337,8 +337,9 @@ export default function Page() {
 
       const imageUrl = await uploadImage();
       const catRef = doc(db, "Catagories", form.categoryId);
-      const subRef = doc(db, "SubCatagories", form.subCategoryId);
-      const newDocRef = doc(collection(db, "Products"));
+const subRef = form.subCategoryId
+  ? doc(db, "SubCatagories", form.subCategoryId)
+  : null;      const newDocRef = doc(collection(db, "Products"));
 
       const autoNextOrder = await getNextOrder();
       const desiredOrder =
@@ -429,8 +430,9 @@ export default function Page() {
       setError("");
 
       const catRef = doc(db, "Catagories", form.categoryId);
-      const subRef = doc(db, "SubCatagories", form.subCategoryId);
-
+const subRef = form.subCategoryId
+  ? doc(db, "SubCatagories", form.subCategoryId)
+  : null;
       let nextImageUrl = editing.image || "";
 
       if (file) {

@@ -19,13 +19,16 @@ if (!admin.apps.length) {
 
 const firestore = admin.firestore();
 
+const GLOBAL_TOPIC = "all_users";
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     console.log("📥 Incoming request body:", body);
 
-    const notificationId = body?.notificationId;
+    const { notificationId, mode = "topic", targetUserId } = body;
 
+    // ── Validate notificationId ──────────────────────────────────────────────
     if (!notificationId || typeof notificationId !== "string") {
       return NextResponse.json(
         { message: "notificationId is required." },
@@ -33,6 +36,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // ── Validate mode ────────────────────────────────────────────────────────
+    if (!["topic", "token"].includes(mode)) {
+      return NextResponse.json(
+        { message: "mode must be 'topic' or 'token'." },
+        { status: 400 }
+      );
+    }
+
+    if (mode === "token" && !targetUserId) {
+      return NextResponse.json(
+        { message: "targetUserId is required when mode is 'token'." },
+        { status: 400 }
+      );
+    }
+
+    // ── Fetch notification doc ───────────────────────────────────────────────
     const notificationRef = firestore
       .collection("notifications")
       .doc(notificationId);
@@ -49,194 +68,298 @@ export async function POST(req: NextRequest) {
     const notification = notificationSnap.data() || {};
     console.log("📄 Notification data:", notification);
 
-    await notificationRef.update({
-      status: "sending",
-      errorMessage: "",
-    });
+    await notificationRef.update({ status: "sending", errorMessage: "" });
 
-    const usersSnap = await firestore.collection("Users").get();
+    // ════════════════════════════════════════════════════════════════════════
+    //  MODE: TOPIC  →  broadcast to all_users topic
+    // ════════════════════════════════════════════════════════════════════════
+    if (mode === "topic") {
+      console.log(`📡 Sending via topic: ${GLOBAL_TOPIC}`);
 
-    const tokens: string[] = [];
+      const message: admin.messaging.Message = {
+        topic: GLOBAL_TOPIC,
 
-    usersSnap.forEach((userDoc) => {
-      const data = userDoc.data();
-
-      const possibleToken =
-        data.fcm_token ||
-        data.fcmToken ||
-        data.FCMToken ||
-        data.token ||
-        data.deviceToken ||
-        data.notificationToken ||
-        "";
-
-      if (typeof possibleToken === "string" && possibleToken.trim()) {
-        tokens.push(possibleToken.trim());
-      }
-    });
-
-    console.log("📱 Total tokens found:", tokens.length);
-    console.log("🔑 Sample tokens:", tokens.slice(0, 3));
-
-    if (tokens.length === 0) {
-      await notificationRef.update({
-        sent: false,
-        sentCount: 0,
-        failedCount: 0,
-        status: "failed",
-        errorMessage: "No FCM tokens found in Users collection.",
-      });
-
-      return NextResponse.json(
-        {
-          message: "No FCM tokens found in Users collection.",
-          sent: false,
-          sentCount: 0,
-          failedCount: 0,
-          status: "failed",
-        },
-        { status: 400 }
-      );
-    }
-
-    // ✅ SEND FCM
-    const response = await admin.messaging().sendEachForMulticast({
-      tokens,
-
-      notification: {
-        title: String(notification.title || ""),
-        body: String(notification.body || ""),
-      },
-
-      data: {
-        notificationId,
-        title: String(notification.title || ""),
-        body: String(notification.body || ""),
-        image: String(notification.image || ""),
-      },
-
-      android: {
-        priority: "high",
-        notification: {
-          ...(notification.image
-            ? { imageUrl: String(notification.image) }
-            : {}),
-        },
-      },
-
-      // ✅ iOS config with debug-friendly headers
-      apns: {
-        payload: {
-          aps: {
-            alert: {
-              title: String(notification.title || ""),
-              body: String(notification.body || ""),
-            },
-            sound: "default",
-            badge: 1,
-            "content-available": 1,
-          },
-        },
-        headers: {
-          "apns-priority": "10",
-          "apns-push-type": "alert",
-        },
-        fcmOptions: notification.image
-          ? {
-              imageUrl: String(notification.image),
-            }
-          : undefined,
-      },
-
-      webpush: {
         notification: {
           title: String(notification.title || ""),
           body: String(notification.body || ""),
-          ...(notification.image
-            ? { image: String(notification.image) }
-            : {}),
         },
-      },
-    });
 
-    console.log("📤 FCM Full Response:", JSON.stringify(response, null, 2));
+        data: {
+          notificationId,
+          title: String(notification.title || ""),
+          body: String(notification.body || ""),
+          image: String(notification.image || ""),
+          mode: "topic",
+        },
 
-    // ✅ LOG EACH TOKEN RESULT (VERY IMPORTANT)
-    const invalidTokens: string[] = [];
+        android: {
+          priority: "high",
+          notification: {
+            ...(notification.image
+              ? { imageUrl: String(notification.image) }
+              : {}),
+          },
+        },
 
-    response.responses.forEach((resp, idx) => {
-      if (resp.success) {
-        console.log(`✅ Success for token ${idx}`);
-      } else {
-        console.log(`❌ Failed for token ${idx}`);
-        console.log("👉 Token:", tokens[idx]);
-        console.log("👉 Error code:", resp.error?.code);
-        console.log("👉 Error message:", resp.error?.message);
+        apns: {
+          payload: {
+            aps: {
+              alert: {
+                title: String(notification.title || ""),
+                body: String(notification.body || ""),
+              },
+              sound: "default",
+              badge: 1,
+              "content-available": 1,
+            },
+          },
+          headers: {
+            "apns-priority": "10",
+            "apns-push-type": "alert",
+          },
+          fcmOptions: notification.image
+            ? { imageUrl: String(notification.image) }
+            : undefined,
+        },
 
-        const err = resp.error?.code || "";
+        webpush: {
+          notification: {
+            title: String(notification.title || ""),
+            body: String(notification.body || ""),
+            ...(notification.image
+              ? { image: String(notification.image) }
+              : {}),
+          },
+        },
+      };
 
-        if (
-          err === "messaging/invalid-registration-token" ||
-          err === "messaging/registration-token-not-registered"
-        ) {
-          invalidTokens.push(tokens[idx]);
-        }
-      }
-    });
+      const messageId = await admin.messaging().send(message);
+      console.log("✅ Topic message sent. ID:", messageId);
 
-    // ✅ CLEAN INVALID TOKENS
-    if (invalidTokens.length > 0) {
-      console.log("🧹 Removing invalid tokens:", invalidTokens);
-
+      // Count subscribers for informational purposes
       const usersSnap = await firestore.collection("Users").get();
+      const subscriberCount = usersSnap.size;
 
-      usersSnap.forEach(async (userDoc) => {
-        const data = userDoc.data();
+      await notificationRef.update({
+        sent: true,
+        sentCount: subscriberCount,
+        failedCount: 0,
+        status: "sent",
+        sentAt: admin.firestore.FieldValue.serverTimestamp(),
+        errorMessage: "",
+        deliveryMode: "topic",
+        targetTopic: GLOBAL_TOPIC,
+      });
 
-        if (invalidTokens.includes(data.fcm_token)) {
-          await userDoc.ref.update({
-            fcm_token: "",
-          });
-        }
+      return NextResponse.json({
+        message: "Notification sent to all_users topic.",
+        sent: true,
+        sentCount: subscriberCount,
+        failedCount: 0,
+        status: "sent",
+        deliveryMode: "topic",
+        targetTopic: GLOBAL_TOPIC,
+        sentAt: new Date().toISOString(),
       });
     }
 
-    const sent = response.successCount > 0 && response.failureCount === 0;
+    // ════════════════════════════════════════════════════════════════════════
+    //  MODE: TOKEN  →  send to a specific user's device token
+    // ════════════════════════════════════════════════════════════════════════
+    if (mode === "token") {
+      console.log(`🎯 Sending via token to user: ${targetUserId}`);
 
-    const status =
-      response.successCount > 0 && response.failureCount > 0
-        ? "partial"
-        : response.successCount > 0
-        ? "sent"
-        : "failed";
+      const userRef = firestore.collection("Users").doc(targetUserId);
+      const userSnap = await userRef.get();
 
-    await notificationRef.update({
-      sent,
-      sentCount: response.successCount,
-      failedCount: response.failureCount,
-      status,
-      sentAt: admin.firestore.FieldValue.serverTimestamp(),
-      errorMessage:
-        response.failureCount > 0
-          ? `${response.failureCount} device(s) failed.`
-          : "",
-    });
+      if (!userSnap.exists) {
+        await notificationRef.update({
+          sent: false,
+          sentCount: 0,
+          failedCount: 1,
+          status: "failed",
+          errorMessage: `User ${targetUserId} not found.`,
+        });
 
-    return NextResponse.json({
-      message: "Notification processed.",
-      sent,
-      sentCount: response.successCount,
-      failedCount: response.failureCount,
-      status,
-      sentAt: new Date().toISOString(),
-    });
+        return NextResponse.json(
+          { message: `User ${targetUserId} not found.` },
+          { status: 404 }
+        );
+      }
+
+      const userData = userSnap.data() || {};
+
+      const deviceToken =
+        userData.fcm_token ||
+        userData.fcmToken ||
+        userData.FCMToken ||
+        userData.token ||
+        userData.deviceToken ||
+        userData.notificationToken ||
+        "";
+
+      if (!deviceToken || typeof deviceToken !== "string" || !deviceToken.trim()) {
+        await notificationRef.update({
+          sent: false,
+          sentCount: 0,
+          failedCount: 1,
+          status: "failed",
+          errorMessage: `No FCM token found for user ${targetUserId}.`,
+          deliveryMode: "token",
+          targetUserId,
+        });
+
+        return NextResponse.json(
+          {
+            message: `No FCM token found for user ${targetUserId}.`,
+            sent: false,
+            sentCount: 0,
+            failedCount: 1,
+            status: "failed",
+          },
+          { status: 400 }
+        );
+      }
+
+      console.log(
+        `🔑 Token found for user ${targetUserId}: ${deviceToken.slice(0, 20)}...`
+      );
+
+      const message: admin.messaging.Message = {
+        token: deviceToken.trim(),
+
+        notification: {
+          title: String(notification.title || ""),
+          body: String(notification.body || ""),
+        },
+
+        data: {
+          notificationId,
+          title: String(notification.title || ""),
+          body: String(notification.body || ""),
+          image: String(notification.image || ""),
+          mode: "token",
+          targetUserId,
+        },
+
+        android: {
+          priority: "high",
+          notification: {
+            ...(notification.image
+              ? { imageUrl: String(notification.image) }
+              : {}),
+          },
+        },
+
+        apns: {
+          payload: {
+            aps: {
+              alert: {
+                title: String(notification.title || ""),
+                body: String(notification.body || ""),
+              },
+              sound: "default",
+              badge: 1,
+              "content-available": 1,
+            },
+          },
+          headers: {
+            "apns-priority": "10",
+            "apns-push-type": "alert",
+          },
+          fcmOptions: notification.image
+            ? { imageUrl: String(notification.image) }
+            : undefined,
+        },
+
+        webpush: {
+          notification: {
+            title: String(notification.title || ""),
+            body: String(notification.body || ""),
+            ...(notification.image
+              ? { image: String(notification.image) }
+              : {}),
+          },
+        },
+      };
+
+      try {
+        const messageId = await admin.messaging().send(message);
+        console.log(`✅ Token message sent to user ${targetUserId}. ID:`, messageId);
+
+        await notificationRef.update({
+          sent: true,
+          sentCount: 1,
+          failedCount: 0,
+          status: "sent",
+          sentAt: admin.firestore.FieldValue.serverTimestamp(),
+          errorMessage: "",
+          deliveryMode: "token",
+          targetUserId,
+        });
+
+        return NextResponse.json({
+          message: `Notification sent to user ${targetUserId}.`,
+          sent: true,
+          sentCount: 1,
+          failedCount: 0,
+          status: "sent",
+          deliveryMode: "token",
+          targetUserId,
+          sentAt: new Date().toISOString(),
+        });
+      } catch (sendError: any) {
+        console.error(
+          `❌ Failed to send to user ${targetUserId}:`,
+          sendError
+        );
+
+        const errCode = sendError?.errorInfo?.code || "";
+
+        // Clean up invalid token
+        if (
+          errCode === "messaging/invalid-registration-token" ||
+          errCode === "messaging/registration-token-not-registered"
+        ) {
+          await userRef.update({ fcm_token: "" });
+          console.log(`🧹 Cleared invalid token for user ${targetUserId}`);
+        }
+
+        await notificationRef.update({
+          sent: false,
+          sentCount: 0,
+          failedCount: 1,
+          status: "failed",
+          errorMessage:
+            sendError?.message || `Failed to deliver to user ${targetUserId}.`,
+          deliveryMode: "token",
+          targetUserId,
+        });
+
+        return NextResponse.json(
+          {
+            message:
+              sendError?.message ||
+              `Failed to send notification to user ${targetUserId}.`,
+            sent: false,
+            sentCount: 0,
+            failedCount: 1,
+            status: "failed",
+          },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Fallback (should never reach here)
+    return NextResponse.json(
+      { message: "Invalid mode." },
+      { status: 400 }
+    );
   } catch (error: any) {
     console.error("🔥 FCM send error:", error);
-
     return NextResponse.json(
-      {
-        message: error?.message || "Failed to send notification.",
-      },
+      { message: error?.message || "Failed to send notification." },
       { status: 500 }
     );
   }
