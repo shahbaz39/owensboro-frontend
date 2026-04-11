@@ -40,12 +40,14 @@ type HeaderImage = {
   id: string;
   title: string;
   image: string;
-  categoryId?: string;
+  categoryId: string;
   subCategoryId: string;
   productId: string;
+  categoryName?: string;
   subCategoryName?: string;
   productName?: string;
   createdAt?: any;
+  path: string;
 };
 
 type FormState = {
@@ -60,6 +62,30 @@ const EMPTY_FORM: FormState = {
   categoryId: "",
   subCategoryId: "",
   productId: "",
+};
+
+const buildPathString = ({
+  categoryId,
+  subCategoryId,
+  productId,
+}: {
+  categoryId?: string;
+  subCategoryId?: string;
+  productId?: string;
+}) => {
+  if (productId && subCategoryId && categoryId) {
+    return `/Catagories/${categoryId}/SubCatagories/${subCategoryId}/Products/${productId}`;
+  }
+
+  if (subCategoryId && categoryId) {
+    return `/Catagories/${categoryId}/SubCatagories/${subCategoryId}`;
+  }
+
+  if (categoryId) {
+    return `/Catagories/${categoryId}`;
+  }
+
+  return "/";
 };
 
 export default function Page() {
@@ -111,10 +137,13 @@ export default function Page() {
       const data: HeaderImage[] = headerSnap.docs.map((d) => {
         const x = d.data();
 
-        const subId =
-          x.subCategoryId || x.subCategoryRef?.id || "";
-        const productId =
-          x.productId || x.productRef?.id || "";
+        const categoryId = x.categoryId || x.categoryRef?.id || "";
+        const subId = x.subCategoryId || x.subCategoryRef?.id || "";
+        const productId = x.productId || x.productRef?.id || "";
+
+        const cat =
+          cats.find((c) => c.id === categoryId) ||
+          cats.find((c) => c.id === subs.find((s) => s.id === subId)?.categoryId);
 
         const sub = subs.find((s) => s.id === subId);
         const prod = prods.find((p) => p.id === productId);
@@ -123,12 +152,14 @@ export default function Page() {
           id: d.id,
           title: x.title || "",
           image: x.image || "",
-          categoryId: sub?.categoryId || "",
+          categoryId: categoryId || sub?.categoryId || "",
           subCategoryId: subId,
           productId,
           createdAt: x.createdAt,
+          categoryName: cat?.name || "",
           subCategoryName: sub?.name || "",
           productName: prod?.title || "",
+          path: x.path || "",
         };
       });
 
@@ -160,7 +191,7 @@ export default function Page() {
 
     setForm({
       title: editing.title || "",
-      categoryId: sub?.categoryId || "",
+      categoryId: editing.categoryId || sub?.categoryId || "",
       subCategoryId: editing.subCategoryId || "",
       productId: editing.productId || "",
     });
@@ -176,11 +207,11 @@ export default function Page() {
   }, [form.subCategoryId, products]);
 
   /* VALIDATION */
-const validate = () => {
-  if (!form.title.trim()) return "Title is required";
-  if (!form.categoryId) return "Category is required";
-  return "";
-};
+  const validate = () => {
+    if (!form.title.trim()) return "Title is required";
+    if (!form.categoryId) return "Category is required";
+    return "";
+  };
 
   /* HELPERS */
   const closeModal = () => {
@@ -226,27 +257,39 @@ const validate = () => {
 
       const imageUrl = await uploadImage();
 
-      const subRef = form.subCategoryId
-  ? doc(db, "SubCatagories", form.subCategoryId)
-  : null;
+      const categoryRef = form.categoryId
+        ? doc(db, "Catagories", form.categoryId)
+        : null;
 
-const prodRef = form.productId
-  ? doc(db, "Products", form.productId)
-  : null;
+      const subRef = form.subCategoryId
+        ? doc(db, "SubCatagories", form.subCategoryId)
+        : null;
+
+      const prodRef = form.productId
+        ? doc(db, "Products", form.productId)
+        : null;
+
+      const path = buildPathString({
+        categoryId: form.categoryId,
+        subCategoryId: form.subCategoryId,
+        productId: form.productId,
+      });
 
       const docRef = await addDoc(collection(db, "HeaderImages"), {
         title: form.title,
         image: imageUrl,
+        categoryId: form.categoryId,
         subCategoryId: form.subCategoryId,
         productId: form.productId,
+        categoryRef,
         subCategoryRef: subRef,
         productRef: prodRef,
+        path,
         createdAt: new Date(),
       });
 
-      const selectedSub = subCategories.find(
-        (s) => s.id === form.subCategoryId,
-      );
+      const selectedCategory = categories.find((c) => c.id === form.categoryId);
+      const selectedSub = subCategories.find((s) => s.id === form.subCategoryId);
       const selectedProduct = products.find((p) => p.id === form.productId);
 
       setItems((prev) => [
@@ -257,9 +300,11 @@ const prodRef = form.productId
           categoryId: form.categoryId,
           subCategoryId: form.subCategoryId,
           productId: form.productId,
+          categoryName: selectedCategory?.name || "",
           subCategoryName: selectedSub?.name || "",
           productName: selectedProduct?.title || "",
           createdAt: { seconds: Math.floor(Date.now() / 1000) },
+          path,
         },
         ...prev,
       ]);
@@ -294,21 +339,34 @@ const prodRef = form.productId
         imageUrl = await uploadImage();
       }
 
-    const subRef = form.subCategoryId
-  ? doc(db, "SubCatagories", form.subCategoryId)
-  : null;
+      const categoryRef = form.categoryId
+        ? doc(db, "Catagories", form.categoryId)
+        : null;
 
-const prodRef = form.productId
-  ? doc(db, "Products", form.productId)
-  : null;
+      const subRef = form.subCategoryId
+        ? doc(db, "SubCatagories", form.subCategoryId)
+        : null;
+
+      const prodRef = form.productId
+        ? doc(db, "Products", form.productId)
+        : null;
+
+      const path = buildPathString({
+        categoryId: form.categoryId,
+        subCategoryId: form.subCategoryId,
+        productId: form.productId,
+      });
 
       await updateDoc(doc(db, "HeaderImages", editing.id), {
         title: form.title,
         image: imageUrl,
+        categoryId: form.categoryId,
         subCategoryId: form.subCategoryId,
         productId: form.productId,
+        categoryRef,
         subCategoryRef: subRef,
         productRef: prodRef,
+        path,
       });
 
       setItems((prev) =>
@@ -321,11 +379,13 @@ const prodRef = form.productId
                 categoryId: form.categoryId,
                 subCategoryId: form.subCategoryId,
                 productId: form.productId,
+                categoryName:
+                  categories.find((c) => c.id === form.categoryId)?.name || "",
                 subCategoryName:
-                  subCategories.find((s) => s.id === form.subCategoryId)?.name ||
-                  "",
+                  subCategories.find((s) => s.id === form.subCategoryId)?.name || "",
                 productName:
                   products.find((p) => p.id === form.productId)?.title || "",
+                path,
               }
             : item,
         ),
