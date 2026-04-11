@@ -33,6 +33,31 @@ type Banner = {
   subCategory: string;
   product: string;
   image: string;
+  path: string;
+};
+
+const buildBannerPath = ({
+  categoryId,
+  subCategoryId,
+  productId,
+}: {
+  categoryId?: string;
+  subCategoryId?: string;
+  productId?: string;
+}) => {
+  if (productId && subCategoryId && categoryId) {
+    return `/Catagories/${categoryId}/SubCatagories/${subCategoryId}/Products/${productId}`;
+  }
+
+  if (subCategoryId && categoryId) {
+    return `/Catagories/${categoryId}/SubCatagories/${subCategoryId}`;
+  }
+
+  if (categoryId) {
+    return `/Catagories/${categoryId}`;
+  }
+
+  return "/";
 };
 
 export default function Page() {
@@ -99,6 +124,7 @@ export default function Page() {
           subCategory: sub?.name || "",
           product: prod?.name || "",
           image: x.image,
+          path: x.path || "",
         };
       });
 
@@ -113,15 +139,11 @@ export default function Page() {
 
   /* FILTERS */
   const filteredSubCategories = useMemo(() => {
-    return subCategories.filter(
-      (s) => s.categoryId === form.categoryId
-    );
+    return subCategories.filter((s) => s.categoryId === form.categoryId);
   }, [subCategories, form.categoryId]);
 
   const filteredProducts = useMemo(() => {
-    return products.filter(
-      (p) => p.subCategoryId === form.subCategoryId
-    );
+    return products.filter((p) => p.subCategoryId === form.subCategoryId);
   }, [products, form.subCategoryId]);
 
   /* PREFILL EDIT */
@@ -163,33 +185,56 @@ export default function Page() {
 
     setLoading(true);
 
-    const imageUrl = await uploadImage();
+    try {
+      const imageUrl = await uploadImage();
 
-    const docRef = await addDoc(collection(db, "Banner"), {
-      bannerName: form.title,
-      categoryRef: form.categoryId ? doc(db, "Catagories", form.categoryId) : null,
-      subCategoryRef: form.subCategoryId ? doc(db, "SubCatagories", form.subCategoryId) : null,
-      productRef: form.productId ? doc(db, "Products", form.productId) : null,
-      image: imageUrl,
-    });
+      const selectedCategory = categories.find((c) => c.id === form.categoryId);
+      const selectedSubCategory = subCategories.find(
+        (s) => s.id === form.subCategoryId,
+      );
+      const selectedProduct = products.find((p) => p.id === form.productId);
 
-    setBanners((prev) => [
-      {
-        id: docRef.id,
-        title: form.title,
+      const path = buildBannerPath({
         categoryId: form.categoryId,
         subCategoryId: form.subCategoryId,
         productId: form.productId,
-        category: categories.find((c) => c.id === form.categoryId)?.name || "",
-        subCategory: subCategories.find((s) => s.id === form.subCategoryId)?.name || "",
-        product: products.find((p) => p.id === form.productId)?.name || "",
-        image: imageUrl,
-      },
-      ...prev,
-    ]);
+      });
 
-    closeModal();
-    setLoading(false);
+      const docRef = await addDoc(collection(db, "Banner"), {
+        bannerName: form.title,
+        categoryRef: form.categoryId
+          ? doc(db, "Catagories", form.categoryId)
+          : null,
+        subCategoryRef: form.subCategoryId
+          ? doc(db, "SubCatagories", form.subCategoryId)
+          : null,
+        productRef: form.productId ? doc(db, "Products", form.productId) : null,
+        image: imageUrl,
+        path,
+      });
+
+      setBanners((prev) => [
+        {
+          id: docRef.id,
+          title: form.title,
+          categoryId: form.categoryId,
+          subCategoryId: form.subCategoryId,
+          productId: form.productId,
+          category: selectedCategory?.name || "",
+          subCategory: selectedSubCategory?.name || "",
+          product: selectedProduct?.name || "",
+          image: imageUrl,
+          path,
+        },
+        ...prev,
+      ]);
+
+      closeModal();
+    } catch (e) {
+      setError("Failed to add banner");
+    } finally {
+      setLoading(false);
+    }
   };
 
   /* UPDATE */
@@ -201,35 +246,64 @@ export default function Page() {
 
     setLoading(true);
 
-    let imageUrl = editing.image;
+    try {
+      let imageUrl = editing.image;
 
-    if (file) {
-      await deleteImage(editing.image);
-      imageUrl = await uploadImage();
+      if (file) {
+        await deleteImage(editing.image);
+        imageUrl = await uploadImage();
+      }
+
+      const selectedCategory = categories.find((c) => c.id === form.categoryId);
+      const selectedSubCategory = subCategories.find(
+        (s) => s.id === form.subCategoryId,
+      );
+      const selectedProduct = products.find((p) => p.id === form.productId);
+
+      const path = buildBannerPath({
+        categoryId: form.categoryId,
+        subCategoryId: form.subCategoryId,
+        productId: form.productId,
+      });
+
+      await updateDoc(doc(db, "Banner", editing.id), {
+        bannerName: form.title,
+        categoryRef: form.categoryId
+          ? doc(db, "Catagories", form.categoryId)
+          : null,
+        subCategoryRef: form.subCategoryId
+          ? doc(db, "SubCatagories", form.subCategoryId)
+          : null,
+        productRef: form.productId ? doc(db, "Products", form.productId) : null,
+        image: imageUrl,
+        path,
+      });
+
+      setBanners((prev) =>
+        prev.map((b) =>
+          b.id === editing.id
+            ? {
+                ...b,
+                title: form.title,
+                categoryId: form.categoryId,
+                subCategoryId: form.subCategoryId,
+                productId: form.productId,
+                category: selectedCategory?.name || "",
+                subCategory: selectedSubCategory?.name || "",
+                product: selectedProduct?.name || "",
+                image: imageUrl,
+                path,
+              }
+            : b,
+        ),
+      );
+
+      closeModal();
+    } catch (e) {
+      setError("Failed to update banner");
+    } finally {
+      setLoading(false);
     }
-
-    await updateDoc(doc(db, "Banner", editing.id), {
-      bannerName: form.title,
-      categoryRef: form.categoryId ? doc(db, "Catagories", form.categoryId) : null,
-      subCategoryRef: form.subCategoryId ? doc(db, "SubCatagories", form.subCategoryId) : null,
-      productRef: form.productId ? doc(db, "Products", form.productId) : null,
-      image: imageUrl,
-    });
-
-    setBanners((prev) =>
-      prev.map((b) =>
-        b.id === editing.id
-          ? {
-              ...b,
-              ...form,
-              image: imageUrl,
-            }
-          : b
-      )
-    );
-
-    closeModal();
-    setLoading(false);
   };
 
   /* DELETE */
