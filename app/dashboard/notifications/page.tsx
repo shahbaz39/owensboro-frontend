@@ -48,7 +48,7 @@ type NotificationItem = {
   errorMessage?: string;
   deliveryMode?: DeliveryMode;
   targetTopic?: string;
-  targetUserIds?: string;
+ targetUserIds?: string[];
 };
 
 type FormState = {
@@ -64,6 +64,8 @@ type UserOption = {
   email: string;
   hasToken: boolean;
 };
+
+
 
 type BulkDeleteMode = "selected" | "all" | null;
 
@@ -266,7 +268,9 @@ export default function Page() {
       title: item.title || "",
       body: item.body || "",
       deliveryMode: item.deliveryMode || "topic",
-     targetUserIds: item.targetUserIds || [],
+   targetUserIds: Array.isArray(item.targetUserIds)
+  ? item.targetUserIds
+  : [],
     });
     setError("");
     setUserSearch("");
@@ -313,7 +317,7 @@ const validateForm = () => {
   // ── Send ──────────────────────────────────────────────────────────────────
   const sendNotificationNow = async (
     notificationId: string,
-    opts?: { mode?: DeliveryMode; targetUserIds?: string },
+    opts?: { mode?: DeliveryMode; targetUserIds?: string[] }
   ) => {
     setSendingId(notificationId);
     setError("");
@@ -322,9 +326,9 @@ const validateForm = () => {
         notificationId,
         mode: opts?.mode ?? "topic",
       };
-      if (opts?.mode === "token" && opts?.targetUserIds) {
-        payload.targetUserIds = opts.targetUserIds;
-      }
+     if (opts?.mode === "token" && opts?.targetUserIds?.length) {
+  payload.targetUserIds = opts.targetUserIds;
+}
 
       const response = await fetch("/api/admin/notifications/send", {
         method: "POST",
@@ -390,7 +394,7 @@ const validateForm = () => {
         sentAt: null,
         deliveryMode: form.deliveryMode,
         targetTopic: form.deliveryMode === "topic" ? "all_users" : "",
-        targetUserIds: form.deliveryMode === "token" ? form.targetUserIds : "",
+        targetUserIds: form.deliveryMode === "token" ? form.targetUserIds :  [],
       });
 
       setNotifications((prev) => [
@@ -408,7 +412,7 @@ const validateForm = () => {
           sentAt: null,
           deliveryMode: form.deliveryMode,
           targetTopic: form.deliveryMode === "topic" ? "all_users" : "",
-          targetUserIds: form.deliveryMode === "token" ? form.targetUserIds : "",
+          targetUserIds: form.deliveryMode === "token" ? form.targetUserIds :  [],
         },
         ...prev,
       ]);
@@ -462,7 +466,7 @@ const validateForm = () => {
         sentAt: null,
         deliveryMode: form.deliveryMode,
         targetTopic: form.deliveryMode === "topic" ? "all_users" : "",
-        targetUserIds: form.deliveryMode === "token" ? form.targetUserIds : "",
+        targetUserIds: form.deliveryMode === "token" ? form.targetUserIds : [],
       });
 
       setNotifications((prev) =>
@@ -482,7 +486,7 @@ const validateForm = () => {
                 deliveryMode: form.deliveryMode,
                 targetTopic: form.deliveryMode === "topic" ? "all_users" : "",
                 targetUserIds:
-                  form.deliveryMode === "token" ? form.targetUserIds : "",
+                  form.deliveryMode === "token" ? form.targetUserIds : [],
               }
             : n,
         ),
@@ -585,7 +589,9 @@ const validateForm = () => {
     return "📡 All Users";
   };
 
-  const selectedUserInfo = users.find((u) => u.id === form.targetUserIds);
+const selectedUsers = users.filter((u) =>
+  form.targetUserIds.includes(u.id)
+);
 
   // ═══════════════════════════════════════════════════════════════════════════
   //  RENDER
@@ -865,7 +871,7 @@ const validateForm = () => {
               <button
                 type="button"
                 onClick={() =>
-                  setForm((p) => ({ ...p, deliveryMode: "topic", targetUserIds: "" }))
+                  setForm((p) => ({ ...p, deliveryMode: "topic", targetUserIds:  [] }))
                 }
                 className={`flex flex-col items-center gap-1.5 rounded-2xl border-2 px-4 py-4 text-sm font-semibold transition-all duration-200 ${
                   form.deliveryMode === "topic"
@@ -997,18 +1003,24 @@ const validateForm = () => {
                 )}
 
                 {/* Selected user summary */}
-                {selectedUserInfo && (
-                  <div className="mt-3 flex items-center gap-2 rounded-xl border border-[#ff7a59]/30 bg-[#ff7a59]/5 px-3 py-2 text-sm">
-                    <span className="text-[#ff7a59]">✓</span>
-                    <span className="font-semibold text-black">
-                      {selectedUserInfo.displayName || selectedUserInfo.email || selectedUserInfo.id}
-                    </span>
-                    {!selectedUserInfo.hasToken && (
-                      <span className="ml-auto text-xs text-red-500">
-                        ⚠ No token
-                      </span>
-                    )}
-                  </div>
+            {selectedUsers.length > 0 && (
+                 <div className="mt-3 flex flex-wrap gap-2">
+  {selectedUsers.map((u) => (
+    <div
+      key={u.id}
+      className="flex items-center gap-2 rounded-xl border border-[#ff7a59]/30 bg-[#ff7a59]/5 px-3 py-2 text-sm"
+    >
+      <span className="text-[#ff7a59]">✓</span>
+      <span className="font-semibold text-black">
+        {u.displayName || u.email || u.id}
+      </span>
+
+      {!u.hasToken && (
+        <span className="text-xs text-red-500">⚠ No token</span>
+      )}
+    </div>
+  ))}
+</div>
                 )}
               </div>
             )}
