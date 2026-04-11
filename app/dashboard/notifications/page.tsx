@@ -353,11 +353,13 @@ const validateForm = () => {
                 sentAt: result?.sentAt ?? new Date(),
                 deliveryMode: result?.deliveryMode ?? opts?.mode ?? "topic",
                 targetTopic: result?.targetTopic ?? "",
-                targetUserIds: result?.targetUserIds ?? opts?.targetUserIds ?? "",
+                targetUserIds: result?.targetUserIds ?? opts?.targetUserIds ?? [],
               }
             : n,
         ),
       );
+
+
 
       await fetchData();
     } catch (err: any) {
@@ -1134,11 +1136,13 @@ const selectedUsers = users.filter((u) =>
                     Topic: {selected.targetTopic}
                   </span>
                 )}
-                {selected.deliveryMode === "token" && selected.targetUserIds && (
-                  <span className="rounded-full bg-black/5 px-3 py-1 font-mono text-xs">
-                    User ID: {selected.targetUserIds}
-                  </span>
-                )}
+              {selected.deliveryMode === "token" &&
+  Array.isArray(selected.targetUserIds) &&
+  selected.targetUserIds.length > 0 && (
+    <span className="rounded-full bg-black/5 px-3 py-1 font-mono text-xs">
+      Users: {selected.targetUserIds.join(", ")}
+    </span>
+)}
               </div>
             </div>
 
