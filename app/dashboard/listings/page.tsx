@@ -640,7 +640,7 @@ const subRef = form.subCategoryId
                 <th className="p-3">Image</th>
                 <th className="p-3">Title</th>
                 <th className="p-3">Category</th>
-                <th className="p-3">Location</th>
+                <th className="p-3">Address</th>
                 <th className="p-3">Order</th>
                 <th className="p-3 text-right">Actions</th>
               </tr>
@@ -804,7 +804,7 @@ const subRef = form.subCategoryId
           />
 
           <Input
-            label="Location"
+            label="Address"
             value={form.location}
             onChange={(v: string) =>
               setForm((prev) => ({ ...prev, location: v }))
@@ -841,13 +841,13 @@ const subRef = form.subCategoryId
             }
           />
 
-          <Input
+          {/* <Input
             label="Location URL (Google Maps)"
             value={form.locationUrl}
             onChange={(v: string) =>
               setForm((prev) => ({ ...prev, locationUrl: v }))
             }
-          />
+          /> */}
 
           <div className="mt-5">
             <label className="text-black text-sm font-semibold">Image</label>
