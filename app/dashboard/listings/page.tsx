@@ -707,35 +707,61 @@ const subRef = form.subCategoryId
       )}
 
       {/* PAGINATION */}
-      <div className="mt-6 flex items-center justify-between text-[#f3ead7]">
-        <p>
-          Showing {(safePage - 1) * perPage + 1}–
-          {Math.min(safePage * perPage, listings.length)} of {listings.length}
-        </p>
+    {/* PAGINATION */}
+<div className="mt-6 flex items-center justify-between text-[#f3ead7]">
+  <p>
+    Showing {(safePage - 1) * perPage + 1}–
+    {Math.min(safePage * perPage, listings.length)} of {listings.length}
+  </p>
 
-        <div className="flex gap-2">
-          <button
-            disabled={safePage === 1}
-            onClick={() => setPage((p) => p - 1)}
-            className="rounded-xl border border-white/10 px-4 py-2 disabled:opacity-40"
-          >
-            Previous
-          </button>
+  <div className="flex items-center gap-2 flex-wrap">
+    <button
+      disabled={safePage === 1}
+      onClick={() => setPage((p) => p - 1)}
+      className="rounded-xl border border-white/10 px-4 py-2 disabled:opacity-40"
+    >
+      Previous
+    </button>
 
-          <button className="rounded-xl bg-[#ff7a59] px-4 py-2 text-white">
-            {safePage}
-          </button>
+    {Array.from({ length: totalPages }, (_, i) => i + 1)
+      .filter((pageNumber) => {
+        return (
+          pageNumber === 1 ||
+          pageNumber === totalPages ||
+          Math.abs(pageNumber - safePage) <= 1
+        );
+      })
+      .map((pageNumber, index, arr) => {
+        const prevPage = arr[index - 1];
+        const showDots = prevPage && pageNumber - prevPage > 1;
 
-          <button
-            disabled={safePage * perPage >= listings.length}
-            onClick={() => setPage((p) => p + 1)}
-            className="rounded-xl border border-white/10 px-4 py-2 disabled:opacity-40"
-          >
-            Next
-          </button>
-        </div>
-      </div>
+        return (
+          <div key={pageNumber} className="flex items-center gap-2">
+            {showDots && <span className="px-2">...</span>}
 
+            <button
+              onClick={() => setPage(pageNumber)}
+              className={`rounded-xl px-4 py-2 ${
+                safePage === pageNumber
+                  ? "bg-[#ff7a59] text-white"
+                  : "border border-white/10 text-[#f3ead7]"
+              }`}
+            >
+              {pageNumber}
+            </button>
+          </div>
+        );
+      })}
+
+    <button
+      disabled={safePage === totalPages}
+      onClick={() => setPage((p) => p + 1)}
+      className="rounded-xl border border-white/10 px-4 py-2 disabled:opacity-40"
+    >
+      Next
+    </button>
+  </div>
+</div>
       {/* ADD / EDIT MODAL */}
       {(adding || editing) && (
         <Modal
