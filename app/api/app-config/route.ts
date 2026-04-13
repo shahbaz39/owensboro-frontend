@@ -28,7 +28,10 @@ export async function GET() {
         latest_version: "1.0.0",
         min_supported_version: "1.0.0",
         force_update: false,
-        play_store_url: "",
+        play_store_url:
+          "https://play.google.com/store/apps/details?id=com.techorphic.TheOwensboroApp",
+        app_store_url:
+          "https://apps.apple.com/us/app/the-owensboro-app/id6753979431",
         message: "No config found.",
       });
     }
@@ -41,7 +44,14 @@ export async function GET() {
         data.min_supported_version || data.latest_version || "1.0.0"
       ),
       force_update: Boolean(data.force_update),
-      play_store_url: String(data.play_store_url || ""),
+      play_store_url: String(
+        data.play_store_url ||
+          "https://play.google.com/store/apps/details?id=com.techorphic.TheOwensboroApp"
+      ),
+      app_store_url: String(
+        data.app_store_url ||
+          "https://apps.apple.com/us/app/the-owensboro-app/id6753979431"
+      ),
       message: String(
         data.message || "A new version is available. Please update the app."
       ),
