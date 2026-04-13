@@ -71,6 +71,7 @@ export default function Page() {
   const [deleting, setDeleting] = useState<Banner | null>(null);
 
   const [loading, setLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
 
   const [form, setForm] = useState({
@@ -310,11 +311,19 @@ export default function Page() {
   const confirmDelete = async () => {
     if (!deleting) return;
 
-    await deleteDoc(doc(db, "Banner", deleting.id));
-    await deleteImage(deleting.image);
+    try {
+      setDeleteLoading(true);
 
-    setBanners((prev) => prev.filter((b) => b.id !== deleting.id));
-    setDeleting(null);
+      await deleteDoc(doc(db, "Banner", deleting.id));
+      await deleteImage(deleting.image);
+
+      setBanners((prev) => prev.filter((b) => b.id !== deleting.id));
+      setDeleting(null);
+    } catch (e) {
+      setError("Failed to delete banner");
+    } finally {
+      setDeleteLoading(false);
+    }
   };
 
   const closeModal = () => {
@@ -377,13 +386,8 @@ export default function Page() {
                     Update
                   </button>
                   <button
-                    onClick={async () => {
-                      if (!confirm("Delete banner?")) return;
-                      await deleteDoc(doc(db, "Banner", b.id));
-                      await deleteImage(b.image);
-                      setBanners((prev) => prev.filter((x) => x.id !== b.id));
-                    }}
-                    className="border border-red-400 px-3 py-1 text-red-500"
+                    onClick={() => setDeleting(b)}
+                    className="border border-red-400 px-3 py-1 text-red-500 rounded"
                   >
                     Delete
                   </button>
@@ -394,7 +398,7 @@ export default function Page() {
         </table>
       </div>
 
-      {/* MODAL */}
+      {/* ADD / EDIT MODAL */}
       {(adding || editing) && (
         <Modal title="Banner" onClose={closeModal}>
           {error && <div className="text-red-500 text-sm">{error}</div>}
@@ -405,17 +409,20 @@ export default function Page() {
             onChange={(v: any) => setForm({ ...form, title: v })}
           />
 
-          {/* CATEGORY (MANDATORY) */}
           <Select
             value={form.categoryId}
             onChange={(v: any) =>
-              setForm({ ...form, categoryId: v, subCategoryId: "", productId: "" })
+              setForm({
+                ...form,
+                categoryId: v,
+                subCategoryId: "",
+                productId: "",
+              })
             }
             options={categories}
             placeholder="Select Category (required)"
           />
 
-          {/* SUBCATEGORY */}
           <Select
             value={form.subCategoryId}
             onChange={(v: any) =>
@@ -425,7 +432,6 @@ export default function Page() {
             placeholder="Select SubCategory (optional)"
           />
 
-          {/* PRODUCT */}
           <Select
             value={form.productId}
             onChange={(v: any) => setForm({ ...form, productId: v })}
@@ -446,6 +452,39 @@ export default function Page() {
           >
             {loading ? "Saving..." : "Save"}
           </button>
+        </Modal>
+      )}
+
+      {/* DELETE MODAL */}
+      {deleting && (
+        <Modal title="Delete Banner" onClose={() => setDeleting(null)}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-700">
+              Are you sure you want to delete{" "}
+              <span className="font-semibold">
+                {deleting.title || "this banner"}
+              </span>
+              ?
+            </p>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setDeleting(null)}
+                disabled={deleteLoading}
+                className="px-4 py-2 rounded-xl border border-gray-300"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={confirmDelete}
+                disabled={deleteLoading}
+                className="px-4 py-2 rounded-xl bg-red-500 text-white disabled:opacity-60"
+              >
+                {deleteLoading ? "Deleting..." : "Confirm Delete"}
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
     </div>
