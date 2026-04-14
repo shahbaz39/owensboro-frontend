@@ -15,8 +15,9 @@ import {
   getDownloadURL,
   deleteObject,
 } from "firebase/storage";
-
+import { serverTimestamp } from "firebase/firestore";
 import { db, storage } from "@/lib/firebaseServices";
+import { query, orderBy } from "firebase/firestore";
 
 /* TYPES */
 type Category = { id: string; name: string };
@@ -34,6 +35,8 @@ type Banner = {
   product: string;
   image: string;
   path: string;
+  createdAt?: any;
+
 };
 
 const buildBannerPath = ({
@@ -86,7 +89,12 @@ export default function Page() {
   /* FETCH */
   useEffect(() => {
     const fetchData = async () => {
-      const bannerSnap = await getDocs(collection(db, "Banner"));
+    const bannerQuery = query(
+  collection(db, "Banner"),
+  orderBy("createdAt", "desc") // ✅ latest first
+);
+
+const bannerSnap = await getDocs(bannerQuery);
       const catSnap = await getDocs(collection(db, "Catagories"));
       const subSnap = await getDocs(collection(db, "SubCatagories"));
       const prodSnap = await getDocs(collection(db, "Products"));
@@ -212,6 +220,7 @@ export default function Page() {
         productRef: form.productId ? doc(db, "Products", form.productId) : null,
         image: imageUrl,
         path,
+        createdAt: serverTimestamp(),
       });
 
       setBanners((prev) => [
@@ -226,6 +235,7 @@ export default function Page() {
           product: selectedProduct?.name || "",
           image: imageUrl,
           path,
+          createdAt: new Date(),
         },
         ...prev,
       ]);
