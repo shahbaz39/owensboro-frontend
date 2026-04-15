@@ -15,6 +15,8 @@ const menuItems = [
   { name: "Contact Support", path: "/dashboard/contact" },
   { name: "User Info", path: "/dashboard/users" },
     { name: "Notifications", path: "/dashboard/notifications" },
+      { name: "App Config", path: "/dashboard/app-config" },
+
 ];
 
 export default function Sidebar() {
