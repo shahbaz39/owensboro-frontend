@@ -14,8 +14,9 @@ const menuItems = [
   { name: "Vote for Favourite", path: "/dashboard/vote" },
   { name: "Contact Support", path: "/dashboard/contact" },
   { name: "User Info", path: "/dashboard/users" },
-    { name: "Notifications", path: "/dashboard/notifications" },
-      { name: "App Config", path: "/dashboard/app-config" },
+  { name: "Notifications", path: "/dashboard/notifications" },
+  { name: "App Config", path: "/dashboard/app-config" },
+  { name: "Groups", path: "/dashboard/groups" },
 
 ];
 
